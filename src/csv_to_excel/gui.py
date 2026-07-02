@@ -758,6 +758,10 @@ class ConverterApp:
         if path:
             state = "submitted" if self.input_submitted else "selected"
             self.upload_hint.configure(text=f"{state.title()}: {self.display_path(Path(path))}")
+        elif self.mode.get() == "folder":
+            self.upload_hint.configure(text=f"Click the plus box to choose a folder containing {', '.join(self.spec.input_extensions)} files.")
+        else:
+            self.upload_hint.configure(text=f"Click the plus box to choose a {self.spec.input_label} file.")
         self.update_suggested_name()
 
     def display_path(self, path: Path, max_length: int = 92) -> str:
@@ -941,6 +945,7 @@ class ConverterApp:
                 self.root.after(0, lambda: self.write_log(f"Output folder: {output_directory}"))
                 converted = self.convert_folder(input_path, output_directory)
                 message = "Created:\n" + "\n".join(str(path) for path in converted)
+                outputs = converted
             else:
                 output_path = self.output_path_for(input_path)
                 self.root.after(0, lambda: self.write_log(f"Output file: {output_path}"))
@@ -952,11 +957,12 @@ class ConverterApp:
                 self.queue_step(3, f"Writing {self.spec.output_tag}: {output_path.name}")
                 created = self.convert_one(input_path, output_path)
                 message = f"Created:\n{created}"
+                outputs = [created]
 
             if self.cancel_event.is_set():
                 message += "\n\nCancel was requested, but the active file had already completed."
             self.queue_step(4, "Conversion complete", completed=5)
-            self.finish(message, success=True)
+            self.finish(message, success=True, outputs=outputs)
         except ConversionError as error:
             if self.cancel_event.is_set() or "cancelled" in str(error).lower():
                 self.finish(str(error), success=False, cancelled=True)
@@ -965,26 +971,134 @@ class ConverterApp:
         except Exception as error:
             self.finish(f"Unexpected error: {error}", success=False)
 
-    def finish(self, message: str, success: bool, cancelled: bool = False) -> None:
+    def finish(self, message: str, success: bool, cancelled: bool = False, outputs: list[Path] | None = None) -> None:
         def update_ui() -> None:
-            self.progress.stop()
             self.write_log(message)
             if cancelled:
                 self.status.set("Cancelled")
                 self.render_timeline(detail="Conversion cancelled")
+                self.set_progress(self.progress_value.get(), "Cancelled")
             else:
                 self.status.set("Done" if success else "Failed")
                 if success:
+                    self.last_outputs = outputs or []
+                    self.set_progress(100, "Download ready")
                     self.render_timeline(completed=5, detail="All steps complete")
             self.convert_button.configure(state="normal")
             self.cancel_button.configure(state="disabled")
             self.is_converting = False
             if success:
-                messagebox.showinfo("Conversion complete", message)
+                messagebox.showinfo("Conversion complete", "Your conversion is complete. Opening the download page now.")
+                self.show_download_page(self.last_outputs)
             else:
                 messagebox.showerror("Conversion stopped" if cancelled else "Conversion failed", message)
 
         self.root.after(0, update_ui)
+
+    def show_download_page(self, outputs: list[Path]) -> None:
+        if not outputs:
+            self.show_toast("Download ready", "The conversion finished, but no output path was reported.")
+            return
+
+        theme = self.theme
+        page = tk.Toplevel(self.root)
+        page.title("Download Ready")
+        page.minsize(560, 360)
+        page.transient(self.root)
+        page.configure(bg=theme.background)
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(1, weight=1)
+
+        header = tk.Frame(page, bg=theme.background, padx=22, pady=18)
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        tk.Label(header, text="Download Ready", bg=theme.background, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
+            row=0,
+            column=0,
+            sticky="w",
+        )
+        tk.Label(
+            header,
+            text="Your converted file is ready. Open it now or open the folder where it was saved.",
+            bg=theme.background,
+            fg=theme.muted,
+            font=("Segoe UI", 10),
+            wraplength=500,
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+
+        content = tk.Frame(page, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=16, pady=14)
+        content.grid(row=1, column=0, sticky="nsew", padx=22, pady=(0, 16))
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(0, weight=1)
+
+        listbox = tk.Listbox(
+            content,
+            bg=theme.log_background,
+            fg=theme.log_text,
+            selectbackground=theme.selection,
+            selectforeground=theme.text,
+            activestyle="none",
+            bd=0,
+            highlightthickness=0,
+            font=("Segoe UI", 10),
+        )
+        listbox.grid(row=0, column=0, sticky="nsew")
+        for output in outputs:
+            listbox.insert("end", str(output))
+        listbox.selection_set(0)
+
+        button_row = tk.Frame(page, bg=theme.background, padx=22, pady=(0, 22))
+        button_row.grid(row=2, column=0, sticky="ew")
+        button_row.columnconfigure(3, weight=1)
+
+        def selected_output() -> Path:
+            selection = listbox.curselection()
+            if selection:
+                return outputs[selection[0]]
+            return outputs[0]
+
+        ttk.Button(button_row, text="Open File", style="Accent.TButton", command=lambda: self.open_path(selected_output())).grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(0, 10),
+        )
+        ttk.Button(
+            button_row,
+            text="Open Folder",
+            style="Secondary.TButton",
+            command=lambda: self.open_path(selected_output().parent),
+        ).grid(row=0, column=1, sticky="w", padx=(0, 10))
+        ttk.Button(
+            button_row,
+            text="New Conversion",
+            style="Ghost.TButton",
+            command=lambda: self.reset_after_download(page),
+        ).grid(row=0, column=2, sticky="w")
+
+        self.show_toast("Download page opened", "Use Open File or Open Folder to access the converted output.")
+
+    def open_path(self, path: Path) -> None:
+        try:
+            if not path.exists():
+                messagebox.showerror("Missing output", f"This path no longer exists:\n{path}")
+                return
+            os.startfile(str(path))
+        except OSError as error:
+            messagebox.showerror("Could not open", f"Windows could not open this path:\n{path}\n\n{error}")
+
+    def reset_after_download(self, window: tk.Toplevel) -> None:
+        window.destroy()
+        self.input_path.set("")
+        self.output_folder.set("")
+        self.custom_name.set("")
+        self.input_submitted = False
+        self.last_outputs = []
+        self.set_progress(0, "Ready")
+        self.render_timeline()
+        self.update_upload_display()
+        self.show_toast("Ready", "Choose the next file or folder to convert.")
 
     def write_log(self, message: str) -> None:
         self.log.insert("end", f"{message}\n")
