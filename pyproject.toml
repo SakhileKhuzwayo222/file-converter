@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "file-converter"
+version = "0.2.0"
+description = "A small tool for converting files into Microsoft Office formats."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+file-converter-gui = "csv_to_excel.gui:main"
+csv-to-excel = "csv_to_excel.converter:main"
+pdf-to-word = "csv_to_excel.office:main"
+csv-to-excel-gui = "csv_to_excel.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

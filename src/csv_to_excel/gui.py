@@ -1,0 +1,898 @@
+from __future__ import annotations
+
+import threading
+import tkinter as tk
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+
+from .converter import (
+    ConversionError,
+    convert_csv_to_excel,
+    convert_json_to_excel,
+    convert_tsv_to_excel,
+    files_in_directory,
+)
+from .office import convert_pdf_to_word, convert_text_to_word
+
+
+ConverterFunction = Callable[[Path, Path | None, str, str | None, bool], Path]
+INVALID_FILENAME_CHARS = '<>:"/\\|?*'
+
+
+@dataclass(frozen=True)
+class AppTheme:
+    background: str
+    panel: str
+    panel_alt: str
+    entry: str
+    text: str
+    muted: str
+    border: str
+    accent: str
+    accent_hover: str
+    accent_text: str
+    danger: str
+    danger_hover: str
+    log_background: str
+    log_text: str
+    selection: str
+
+
+THEMES = {
+    "light": AppTheme(
+        background="#f5f7fb",
+        panel="#ffffff",
+        panel_alt="#eef6f4",
+        entry="#ffffff",
+        text="#19202a",
+        muted="#607083",
+        border="#d7dde7",
+        accent="#0f766e",
+        accent_hover="#115e59",
+        accent_text="#ffffff",
+        danger="#dc2626",
+        danger_hover="#b91c1c",
+        log_background="#111827",
+        log_text="#dbeafe",
+        selection="#c7eee8",
+    ),
+    "dark": AppTheme(
+        background="#111113",
+        panel="#1c1f26",
+        panel_alt="#22302d",
+        entry="#14171d",
+        text="#f4f7fb",
+        muted="#9aa7b5",
+        border="#343a46",
+        accent="#2dd4bf",
+        accent_hover="#5eead4",
+        accent_text="#071412",
+        danger="#f87171",
+        danger_hover="#fca5a5",
+        log_background="#090b10",
+        log_text="#c7d2fe",
+        selection="#164e63",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class ConversionSpec:
+    name: str
+    input_label: str
+    input_extensions: tuple[str, ...]
+    output_extension: str
+    output_description: str
+    output_tag: str
+    supports_encoding: bool
+    supports_delimiter: bool
+    convert: ConverterFunction
+
+
+def csv_to_excel(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_csv_to_excel(
+        input_path,
+        output_path,
+        encoding=encoding,
+        delimiter=delimiter,
+        overwrite=overwrite,
+    )
+
+
+def tsv_to_excel(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_tsv_to_excel(input_path, output_path, encoding=encoding, overwrite=overwrite)
+
+
+def json_to_excel(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_json_to_excel(input_path, output_path, encoding=encoding, overwrite=overwrite)
+
+
+def pdf_to_word(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_pdf_to_word(input_path, output_path, overwrite=overwrite)
+
+
+def text_to_word(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_text_to_word(input_path, output_path, encoding=encoding, overwrite=overwrite)
+
+
+CONVERSIONS = [
+    ConversionSpec(
+        name="CSV to Excel (.xlsx)",
+        input_label="CSV",
+        input_extensions=(".csv",),
+        output_extension=".xlsx",
+        output_description="Excel workbook",
+        output_tag="Excel",
+        supports_encoding=True,
+        supports_delimiter=True,
+        convert=csv_to_excel,
+    ),
+    ConversionSpec(
+        name="TSV to Excel (.xlsx)",
+        input_label="TSV",
+        input_extensions=(".tsv",),
+        output_extension=".xlsx",
+        output_description="Excel workbook",
+        output_tag="Excel",
+        supports_encoding=True,
+        supports_delimiter=False,
+        convert=tsv_to_excel,
+    ),
+    ConversionSpec(
+        name="JSON to Excel (.xlsx)",
+        input_label="JSON",
+        input_extensions=(".json",),
+        output_extension=".xlsx",
+        output_description="Excel workbook",
+        output_tag="Excel",
+        supports_encoding=True,
+        supports_delimiter=False,
+        convert=json_to_excel,
+    ),
+    ConversionSpec(
+        name="PDF to Word (.docx)",
+        input_label="PDF",
+        input_extensions=(".pdf",),
+        output_extension=".docx",
+        output_description="Word document",
+        output_tag="Word",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=pdf_to_word,
+    ),
+    ConversionSpec(
+        name="Text or Markdown to Word (.docx)",
+        input_label="text",
+        input_extensions=(".txt", ".md"),
+        output_extension=".docx",
+        output_description="Word document",
+        output_tag="Word",
+        supports_encoding=True,
+        supports_delimiter=False,
+        convert=text_to_word,
+    ),
+]
+
+
+class ConverterApp:
+    def __init__(self, root: tk.Tk) -> None:
+        self.root = root
+        self.root.title("File Converter")
+        self.root.minsize(820, 680)
+
+        self.style = ttk.Style()
+        self.theme_name = tk.StringVar(value="light")
+        self.conversion_name = tk.StringVar(value=CONVERSIONS[0].name)
+        self.mode = tk.StringVar(value="file")
+        self.input_path = tk.StringVar()
+        self.output_folder = tk.StringVar()
+        self.encoding = tk.StringVar(value="utf-8-sig")
+        self.delimiter = tk.StringVar()
+        self.overwrite = tk.BooleanVar(value=False)
+        self.rename_output = tk.BooleanVar(value=False)
+        self.custom_name = tk.StringVar()
+        self.suggested_name = tk.StringVar(value="Suggested output: choose a file first")
+        self.status = tk.StringVar(value="Ready")
+
+        self.input_submitted = False
+        self.cancel_event = threading.Event()
+        self.is_converting = False
+        self.step_titles = [
+            "Input submitted",
+            "Output name prepared",
+            "Source read",
+            "Office document written",
+            "Finished",
+        ]
+
+        self.tk_backgrounds: list[tuple[tk.Widget, str]] = []
+        self.card_frames: list[tk.Frame] = []
+        self.window_icon = self.create_window_icon()
+        self.root.iconphoto(True, self.window_icon)
+
+        self.build_layout()
+        self.apply_theme()
+        self.update_labels(clear_paths=False)
+        self.render_timeline()
+
+    @property
+    def theme(self) -> AppTheme:
+        return THEMES[self.theme_name.get()]
+
+    @property
+    def spec(self) -> ConversionSpec:
+        for conversion in CONVERSIONS:
+            if conversion.name == self.conversion_name.get():
+                return conversion
+        return CONVERSIONS[0]
+
+    def create_window_icon(self) -> tk.PhotoImage:
+        icon = tk.PhotoImage(width=64, height=64)
+        icon.put("#0f766e", to=(12, 6, 52, 58))
+        icon.put("#0f766e", to=(7, 12, 57, 52))
+        icon.put("#14b8a6", to=(12, 10, 52, 50))
+        icon.put("#14b8a6", to=(10, 14, 54, 48))
+        icon.put("#115e59", to=(12, 49, 52, 58))
+        icon.put("#0b4f4a", to=(47, 14, 57, 52))
+
+        icon.put("#ffffff", to=(18, 17, 24, 47))
+        icon.put("#ffffff", to=(18, 17, 36, 23))
+        icon.put("#ffffff", to=(18, 30, 33, 36))
+
+        icon.put("#ffffff", to=(37, 17, 51, 23))
+        icon.put("#ffffff", to=(37, 41, 51, 47))
+        icon.put("#ffffff", to=(34, 20, 40, 44))
+        icon.put("#14b8a6", to=(45, 24, 52, 40))
+        return icon
+
+    def register_background(self, widget: tk.Widget, role: str) -> None:
+        self.tk_backgrounds.append((widget, role))
+
+    def build_layout(self) -> None:
+        self.root.columnconfigure(0, weight=1)
+        self.root.rowconfigure(0, weight=1)
+
+        self.main = tk.Frame(self.root, padx=24, pady=22)
+        self.main.grid(row=0, column=0, sticky="nsew")
+        self.main.columnconfigure(0, weight=1)
+        self.main.rowconfigure(6, weight=1)
+        self.register_background(self.main, "background")
+
+        self.build_header()
+        self.build_conversion_card()
+        self.build_upload_card()
+        self.build_output_card()
+        self.build_options_card()
+        self.build_action_area()
+        self.build_status_area()
+
+    def build_header(self) -> None:
+        header = tk.Frame(self.main)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 18))
+        header.columnconfigure(1, weight=1)
+        self.register_background(header, "background")
+
+        self.logo_canvas = tk.Canvas(header, width=54, height=54, highlightthickness=0, bd=0)
+        self.logo_canvas.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 14))
+        self.register_background(self.logo_canvas, "background")
+
+        ttk.Label(header, text="File Converter", style="Title.TLabel").grid(row=0, column=1, sticky="sw")
+        ttk.Label(header, text="Upload, rename, convert, and track every step", style="Subtitle.TLabel").grid(
+            row=1,
+            column=1,
+            sticky="nw",
+        )
+        self.theme_button = ttk.Button(header, text="Dark mode", style="Ghost.TButton", command=self.toggle_theme)
+        self.theme_button.grid(row=0, column=2, rowspan=2, sticky="e")
+
+    def make_card(self, row: int, title: str) -> tk.Frame:
+        card = tk.Frame(self.main, bd=0, highlightthickness=1)
+        card.grid(row=row, column=0, sticky="ew", pady=(0, 14))
+        card.columnconfigure(0, weight=1)
+        self.card_frames.append(card)
+
+        ttk.Label(card, text=title, style="Section.TLabel").grid(row=0, column=0, sticky="w", padx=18, pady=(14, 8))
+        body = tk.Frame(card)
+        body.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 16))
+        body.columnconfigure(1, weight=1)
+        self.register_background(body, "panel")
+        return body
+
+    def build_conversion_card(self) -> None:
+        body = self.make_card(1, "Conversion")
+
+        ttk.Label(body, text="Type", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
+        self.conversion_menu = ttk.Combobox(
+            body,
+            textvariable=self.conversion_name,
+            values=[conversion.name for conversion in CONVERSIONS],
+            state="readonly",
+        )
+        self.conversion_menu.grid(row=0, column=1, sticky="ew", pady=(0, 10))
+        self.conversion_menu.bind("<<ComboboxSelected>>", lambda event: self.update_labels())
+
+        mode_row = tk.Frame(body)
+        mode_row.grid(row=1, column=1, sticky="w")
+        self.register_background(mode_row, "panel")
+        ttk.Radiobutton(
+            mode_row,
+            text="Single file",
+            value="file",
+            variable=self.mode,
+            style="Card.TRadiobutton",
+            command=self.update_labels,
+        ).grid(row=0, column=0, padx=(0, 18), sticky="w")
+        ttk.Radiobutton(
+            mode_row,
+            text="Folder of files",
+            value="folder",
+            variable=self.mode,
+            style="Card.TRadiobutton",
+            command=self.update_labels,
+        ).grid(row=0, column=1, sticky="w")
+
+    def build_upload_card(self) -> None:
+        body = self.make_card(2, "Upload")
+        body.columnconfigure(0, weight=1)
+
+        self.upload_box = tk.Frame(body, bd=0, highlightthickness=1, padx=18, pady=16, cursor="hand2")
+        self.upload_box.grid(row=0, column=0, sticky="ew")
+        self.upload_box.columnconfigure(1, weight=1)
+        self.register_background(self.upload_box, "panel_alt")
+
+        self.plus_label = tk.Label(self.upload_box, text="+", font=("Segoe UI", 34, "bold"), cursor="hand2")
+        self.plus_label.grid(row=0, column=0, rowspan=2, padx=(0, 16))
+        self.register_background(self.plus_label, "panel_alt")
+
+        self.upload_title = ttk.Label(self.upload_box, text="Add file", style="UploadTitle.TLabel")
+        self.upload_title.grid(row=0, column=1, sticky="sw")
+        self.upload_hint = ttk.Label(self.upload_box, text="Click the plus box to choose a file.", style="UploadHint.TLabel")
+        self.upload_hint.grid(row=1, column=1, sticky="nw", pady=(4, 0))
+
+        self.submit_row = tk.Frame(body)
+        self.submit_row.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        self.submit_row.columnconfigure(0, weight=1)
+        self.register_background(self.submit_row, "panel")
+
+        self.submit_button = ttk.Button(self.submit_row, text="Submit", style="Accent.TButton", command=self.submit_input)
+        self.submit_button.grid(row=0, column=0, sticky="w", ipadx=28)
+
+        for widget in (self.upload_box, self.plus_label, self.upload_title, self.upload_hint):
+            widget.bind("<Button-1>", lambda event: self.choose_input())
+
+    def build_output_card(self) -> None:
+        body = self.make_card(3, "Output")
+
+        ttk.Label(body, text="Save folder", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
+        self.output_entry = ttk.Entry(body, textvariable=self.output_folder)
+        self.output_entry.grid(row=0, column=1, sticky="ew", pady=(0, 10))
+        self.output_button = ttk.Button(body, text="Browse", style="Secondary.TButton", command=self.choose_output_folder)
+        self.output_button.grid(row=0, column=2, sticky="ew", padx=(10, 0), pady=(0, 10))
+
+        ttk.Label(body, text="Rename output file?", style="Card.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 12))
+        rename_row = tk.Frame(body)
+        rename_row.grid(row=1, column=1, columnspan=2, sticky="w")
+        self.register_background(rename_row, "panel")
+        self.rename_no = ttk.Radiobutton(
+            rename_row,
+            text="No - use source name plus file type",
+            value=False,
+            variable=self.rename_output,
+            style="Card.TRadiobutton",
+            command=self.update_rename_controls,
+        )
+        self.rename_no.grid(row=0, column=0, sticky="w", padx=(0, 18))
+        self.rename_yes = ttk.Radiobutton(
+            rename_row,
+            text="Yes - type a custom name",
+            value=True,
+            variable=self.rename_output,
+            style="Card.TRadiobutton",
+            command=self.update_rename_controls,
+        )
+        self.rename_yes.grid(row=0, column=1, sticky="w")
+
+        ttk.Label(body, text="Custom name", style="Card.TLabel").grid(row=2, column=0, sticky="w", padx=(0, 12), pady=(10, 0))
+        self.custom_name_entry = ttk.Entry(body, textvariable=self.custom_name)
+        self.custom_name_entry.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(10, 0))
+
+        self.suggested_label = ttk.Label(body, textvariable=self.suggested_name, style="Muted.TLabel")
+        self.suggested_label.grid(row=3, column=1, columnspan=2, sticky="w", pady=(8, 0))
+
+    def build_options_card(self) -> None:
+        body = self.make_card(4, "Options")
+        body.columnconfigure(3, weight=1)
+
+        self.encoding_label = ttk.Label(body, text="Encoding", style="Card.TLabel")
+        self.encoding_label.grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self.encoding_entry = ttk.Entry(body, textvariable=self.encoding, width=18)
+        self.encoding_entry.grid(row=0, column=1, sticky="w", padx=(0, 20))
+
+        self.delimiter_label = ttk.Label(body, text="CSV delimiter", style="Card.TLabel")
+        self.delimiter_label.grid(row=0, column=2, sticky="w", padx=(0, 10))
+        self.delimiter_entry = ttk.Entry(body, textvariable=self.delimiter, width=10)
+        self.delimiter_entry.grid(row=0, column=3, sticky="w")
+
+        self.overwrite_check = ttk.Checkbutton(
+            body,
+            text="Overwrite existing output files",
+            variable=self.overwrite,
+            style="Card.TCheckbutton",
+        )
+        self.overwrite_check.grid(row=1, column=0, columnspan=4, sticky="w", pady=(12, 0))
+
+    def build_action_area(self) -> None:
+        action_row = tk.Frame(self.main)
+        action_row.grid(row=5, column=0, sticky="ew", pady=(0, 14))
+        action_row.columnconfigure(0, weight=1)
+        self.register_background(action_row, "background")
+
+        self.convert_button = ttk.Button(action_row, text="Convert", style="Accent.TButton", command=self.start_conversion)
+        self.convert_button.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        self.cancel_button = ttk.Button(action_row, text="Cancel", style="Danger.TButton", command=self.request_cancel, state="disabled")
+        self.cancel_button.grid(row=0, column=1, sticky="ew")
+
+        self.progress = ttk.Progressbar(action_row, mode="indeterminate", style="Accent.Horizontal.TProgressbar")
+        self.progress.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+
+    def build_status_area(self) -> None:
+        status_frame = tk.Frame(self.main, bd=0, highlightthickness=1)
+        status_frame.grid(row=6, column=0, sticky="nsew")
+        status_frame.columnconfigure(0, weight=1)
+        status_frame.rowconfigure(2, weight=1)
+        self.card_frames.append(status_frame)
+
+        status_row = tk.Frame(status_frame)
+        status_row.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 8))
+        status_row.columnconfigure(1, weight=1)
+        self.register_background(status_row, "panel")
+
+        ttk.Label(status_row, text="Status", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(status_row, textvariable=self.status, style="Muted.TLabel").grid(row=0, column=1, sticky="e")
+
+        self.timeline = tk.Text(status_frame, height=6, wrap="word", bd=0, padx=12, pady=10, state="disabled")
+        self.timeline.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 10))
+
+        self.log = tk.Text(status_frame, height=7, wrap="word", bd=0, padx=12, pady=10)
+        self.log.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
+
+    def toggle_theme(self) -> None:
+        self.theme_name.set("dark" if self.theme_name.get() == "light" else "light")
+        self.apply_theme()
+
+    def apply_theme(self) -> None:
+        theme = self.theme
+        try:
+            self.style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        self.root.configure(bg=theme.background)
+        for widget, role in self.tk_backgrounds:
+            widget.configure(bg=getattr(theme, role))
+            if widget in (self.plus_label,):
+                widget.configure(fg=theme.accent)
+        for frame in self.card_frames:
+            frame.configure(bg=theme.panel, highlightbackground=theme.border, highlightcolor=theme.border)
+        self.upload_box.configure(highlightbackground=theme.border, highlightcolor=theme.accent)
+
+        self.style.configure(".", font=("Segoe UI", 10), background=theme.background, foreground=theme.text)
+        self.style.configure("Title.TLabel", font=("Segoe UI", 22, "bold"), background=theme.background, foreground=theme.text)
+        self.style.configure("Subtitle.TLabel", font=("Segoe UI", 10), background=theme.background, foreground=theme.muted)
+        self.style.configure("Section.TLabel", font=("Segoe UI", 10, "bold"), background=theme.panel, foreground=theme.text)
+        self.style.configure("Card.TLabel", background=theme.panel, foreground=theme.text)
+        self.style.configure("Muted.TLabel", background=theme.panel, foreground=theme.muted)
+        self.style.configure("UploadTitle.TLabel", font=("Segoe UI", 12, "bold"), background=theme.panel_alt, foreground=theme.text)
+        self.style.configure("UploadHint.TLabel", background=theme.panel_alt, foreground=theme.muted)
+
+        self.style.configure(
+            "TEntry",
+            fieldbackground=theme.entry,
+            foreground=theme.text,
+            bordercolor=theme.border,
+            lightcolor=theme.border,
+            darkcolor=theme.border,
+            insertcolor=theme.text,
+            padding=8,
+        )
+        self.style.map(
+            "TEntry",
+            fieldbackground=[("disabled", theme.panel_alt), ("readonly", theme.entry)],
+            foreground=[("disabled", theme.muted)],
+        )
+        self.style.configure(
+            "TCombobox",
+            fieldbackground=theme.entry,
+            background=theme.panel_alt,
+            foreground=theme.text,
+            arrowcolor=theme.accent,
+            bordercolor=theme.border,
+            lightcolor=theme.border,
+            darkcolor=theme.border,
+            padding=8,
+        )
+        self.style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", theme.entry)],
+            foreground=[("readonly", theme.text)],
+            selectbackground=[("readonly", theme.selection)],
+            selectforeground=[("readonly", theme.text)],
+        )
+
+        self.configure_button_styles()
+        self.style.configure("Card.TRadiobutton", background=theme.panel, foreground=theme.text)
+        self.style.map("Card.TRadiobutton", background=[("active", theme.panel)], foreground=[("active", theme.text)])
+        self.style.configure("Card.TCheckbutton", background=theme.panel, foreground=theme.text)
+        self.style.map("Card.TCheckbutton", background=[("active", theme.panel)], foreground=[("active", theme.text)])
+        self.style.configure(
+            "Accent.Horizontal.TProgressbar",
+            troughcolor=theme.panel_alt,
+            background=theme.accent,
+            bordercolor=theme.border,
+            lightcolor=theme.accent,
+            darkcolor=theme.accent,
+        )
+
+        for text_widget in (self.timeline, self.log):
+            text_widget.configure(
+                bg=theme.log_background,
+                fg=theme.log_text,
+                insertbackground=theme.log_text,
+                selectbackground=theme.selection,
+                selectforeground=theme.text,
+            )
+        self.draw_logo()
+        self.theme_button.configure(text="Light mode" if self.theme_name.get() == "dark" else "Dark mode")
+        self.render_timeline()
+
+    def configure_button_styles(self) -> None:
+        theme = self.theme
+        self.style.configure(
+            "Accent.TButton",
+            font=("Segoe UI", 11, "bold"),
+            background=theme.accent,
+            foreground=theme.accent_text,
+            bordercolor=theme.accent,
+            focusthickness=0,
+            padding=(14, 12),
+        )
+        self.style.map(
+            "Accent.TButton",
+            background=[("active", theme.accent_hover), ("disabled", theme.border)],
+            foreground=[("disabled", theme.muted)],
+        )
+        self.style.configure(
+            "Danger.TButton",
+            font=("Segoe UI", 10, "bold"),
+            background=theme.danger,
+            foreground="#ffffff",
+            bordercolor=theme.danger,
+            padding=(14, 12),
+        )
+        self.style.map(
+            "Danger.TButton",
+            background=[("active", theme.danger_hover), ("disabled", theme.border)],
+            foreground=[("disabled", theme.muted)],
+        )
+        self.style.configure(
+            "Secondary.TButton",
+            background=theme.panel_alt,
+            foreground=theme.text,
+            bordercolor=theme.border,
+            padding=(12, 8),
+        )
+        self.style.map("Secondary.TButton", background=[("active", theme.selection)])
+        self.style.configure(
+            "Ghost.TButton",
+            background=theme.background,
+            foreground=theme.text,
+            bordercolor=theme.border,
+            padding=(12, 8),
+        )
+        self.style.map("Ghost.TButton", background=[("active", theme.panel_alt)])
+
+    def draw_logo(self) -> None:
+        theme = self.theme
+        canvas = self.logo_canvas
+        canvas.delete("all")
+        canvas.configure(bg=theme.background)
+        canvas.create_oval(5, 5, 21, 21, fill="#14b8a6", outline="")
+        canvas.create_oval(33, 5, 49, 21, fill="#14b8a6", outline="")
+        canvas.create_oval(5, 33, 21, 49, fill="#115e59", outline="")
+        canvas.create_oval(33, 33, 49, 49, fill="#0b4f4a", outline="")
+        canvas.create_rectangle(13, 5, 41, 49, fill="#14b8a6", outline="")
+        canvas.create_rectangle(5, 13, 49, 41, fill="#14b8a6", outline="")
+        canvas.create_rectangle(40, 13, 49, 49, fill="#0b4f4a", outline="")
+        canvas.create_rectangle(9, 41, 49, 49, fill="#115e59", outline="")
+
+        canvas.create_rectangle(15, 14, 20, 40, fill="#ffffff", outline="")
+        canvas.create_rectangle(15, 14, 31, 19, fill="#ffffff", outline="")
+        canvas.create_rectangle(15, 25, 29, 30, fill="#ffffff", outline="")
+
+        canvas.create_rectangle(34, 14, 46, 19, fill="#ffffff", outline="")
+        canvas.create_rectangle(34, 35, 46, 40, fill="#ffffff", outline="")
+        canvas.create_rectangle(31, 17, 36, 38, fill="#ffffff", outline="")
+        canvas.create_rectangle(42, 20, 49, 34, fill="#14b8a6", outline="")
+
+    def render_timeline(self, active_index: int | None = None, completed: int = 0, detail: str = "") -> None:
+        lines: list[str] = []
+        for index, title in enumerate(self.step_titles):
+            if active_index == index:
+                marker = "[>]"
+            elif index < completed:
+                marker = "[OK]"
+            else:
+                marker = "[ ]"
+            lines.append(f"{marker} Step {index + 1}: {title}")
+        if detail:
+            lines.append("")
+            lines.append(f"Now: {detail}")
+
+        self.timeline.configure(state="normal")
+        self.timeline.delete("1.0", "end")
+        self.timeline.insert("end", "\n".join(lines))
+        self.timeline.configure(state="disabled")
+
+    def queue_step(self, active_index: int, detail: str, completed: int | None = None) -> None:
+        completed_count = active_index if completed is None else completed
+        self.root.after(0, lambda: self.render_timeline(active_index, completed_count, detail))
+        self.root.after(0, lambda: self.status.set(detail))
+        self.root.after(0, lambda: self.write_log(f"Step {active_index + 1}: {detail}"))
+
+    def update_labels(self, clear_paths: bool = True) -> None:
+        spec = self.spec
+        if self.mode.get() == "folder":
+            self.upload_title.configure(text=f"Add {spec.input_label} folder")
+            self.upload_hint.configure(text=f"Click the plus box to choose a folder containing {', '.join(spec.input_extensions)} files.")
+            self.rename_output.set(False)
+            self.status.set("Ready for folder upload")
+        else:
+            self.upload_title.configure(text=f"Add {spec.input_label} file")
+            self.upload_hint.configure(text=f"Click the plus box to choose a {spec.input_label} file.")
+            self.status.set("Ready")
+
+        encoding_state = "normal" if spec.supports_encoding else "disabled"
+        delimiter_state = "normal" if spec.supports_delimiter else "disabled"
+        self.encoding_entry.configure(state=encoding_state)
+        self.delimiter_entry.configure(state=delimiter_state)
+        if clear_paths:
+            self.input_path.set("")
+            self.output_folder.set("")
+            self.custom_name.set("")
+            self.input_submitted = False
+            self.render_timeline()
+        self.update_upload_display()
+        self.update_rename_controls()
+
+    def update_upload_display(self) -> None:
+        path = self.input_path.get().strip()
+        if path:
+            state = "submitted" if self.input_submitted else "selected"
+            self.upload_hint.configure(text=f"{state.title()}: {path}")
+        self.update_suggested_name()
+
+    def update_rename_controls(self) -> None:
+        folder_mode = self.mode.get() == "folder"
+        if folder_mode:
+            self.rename_output.set(False)
+        state = "normal" if self.rename_output.get() and not folder_mode else "disabled"
+        self.custom_name_entry.configure(state=state)
+        self.rename_yes.configure(state="disabled" if folder_mode else "normal")
+        self.update_suggested_name()
+
+    def update_suggested_name(self) -> None:
+        input_text = self.input_path.get().strip()
+        if not input_text:
+            self.suggested_name.set("Suggested output: choose a file first")
+            return
+        path = Path(input_text)
+        if self.mode.get() == "folder":
+            self.suggested_name.set(f'Folder output: each file will use "Original Name ({self.spec.output_tag}){self.spec.output_extension}"')
+            return
+        self.suggested_name.set(f"Suggested output: {self.default_output_name(path).name}")
+
+    def filetypes(self) -> list[tuple[str, str]]:
+        patterns = " ".join(f"*{extension}" for extension in self.spec.input_extensions)
+        return [(f"{self.spec.input_label.title()} files", patterns), ("All files", "*.*")]
+
+    def choose_input(self) -> None:
+        if self.is_converting:
+            return
+        if self.mode.get() == "folder":
+            path = filedialog.askdirectory(title=f"Choose folder containing {self.spec.input_label} files")
+        else:
+            path = filedialog.askopenfilename(
+                title=f"Choose {self.spec.input_label} file",
+                filetypes=self.filetypes(),
+            )
+        if path:
+            self.input_path.set(path)
+            self.input_submitted = False
+            self.status.set("Upload selected. Press Submit.")
+            self.render_timeline()
+            self.update_upload_display()
+
+    def submit_input(self) -> None:
+        path_text = self.input_path.get().strip()
+        if not path_text:
+            messagebox.showerror("Missing upload", "Click the plus box and choose a file or folder first.")
+            return
+
+        path = Path(path_text)
+        if self.mode.get() == "folder":
+            if not path.is_dir():
+                messagebox.showerror("Invalid folder", "Please choose a folder for folder conversion.")
+                return
+        else:
+            if not path.is_file():
+                messagebox.showerror("Invalid file", "Please choose a file for single-file conversion.")
+                return
+            if path.suffix.lower() not in self.spec.input_extensions:
+                expected = ", ".join(self.spec.input_extensions)
+                messagebox.showerror("Wrong file type", f"Please choose one of these file types: {expected}")
+                return
+
+        self.input_submitted = True
+        self.status.set("Upload submitted")
+        self.update_upload_display()
+        self.render_timeline(active_index=None, completed=1, detail=f"Submitted {path.name}")
+        self.write_log(f"Submitted upload: {path}")
+
+    def choose_output_folder(self) -> None:
+        path = filedialog.askdirectory(title="Choose output folder")
+        if path:
+            self.output_folder.set(path)
+
+    def default_output_name(self, source: Path) -> Path:
+        return Path(f"{source.stem} ({self.spec.output_tag}){self.spec.output_extension}")
+
+    def sanitized_custom_output_name(self) -> str:
+        name = self.custom_name.get().strip()
+        if not name:
+            raise ConversionError("Type a custom output name, or choose No for rename.")
+        cleaned = "".join("_" if char in INVALID_FILENAME_CHARS else char for char in name).strip()
+        if not cleaned:
+            raise ConversionError("The custom output name is not valid.")
+        custom_path = Path(cleaned)
+        if custom_path.suffix.lower() != self.spec.output_extension:
+            cleaned = f"{custom_path.stem}{self.spec.output_extension}"
+        return cleaned
+
+    def output_directory_for(self, source: Path) -> Path:
+        output_text = self.output_folder.get().strip()
+        if output_text:
+            return Path(output_text)
+        return source if source.is_dir() else source.parent
+
+    def output_path_for(self, source: Path) -> Path:
+        output_directory = self.output_directory_for(source)
+        if self.rename_output.get() and self.mode.get() != "folder":
+            return output_directory / self.sanitized_custom_output_name()
+        return output_directory / self.default_output_name(source)
+
+    def start_conversion(self) -> None:
+        if not self.input_submitted:
+            messagebox.showerror("Submit upload", "Choose a file or folder with the plus box, then click Submit first.")
+            return
+
+        self.cancel_event.clear()
+        self.is_converting = True
+        self.convert_button.configure(state="disabled")
+        self.cancel_button.configure(state="normal")
+        self.progress.start(10)
+        self.status.set("Starting")
+        self.write_log("Conversion started.")
+
+        thread = threading.Thread(target=self.convert, daemon=True)
+        thread.start()
+
+    def request_cancel(self) -> None:
+        if not self.is_converting:
+            return
+        self.cancel_event.set()
+        self.status.set("Cancel requested")
+        self.write_log("Cancel requested. The current file will finish if it is already being written.")
+
+    def convert_one(self, input_path: Path, output_path: Path | None) -> Path:
+        return self.spec.convert(
+            input_path,
+            output_path,
+            self.encoding.get().strip() or "utf-8-sig",
+            self.delimiter.get() or None,
+            self.overwrite.get(),
+        )
+
+    def convert_folder(self, input_directory: Path, output_directory: Path) -> list[Path]:
+        if not input_directory.is_dir():
+            raise ConversionError(f"Input must be a folder: {input_directory}")
+
+        files = list(files_in_directory(input_directory, self.spec.input_extensions))
+        if not files:
+            raise ConversionError(f"No {self.spec.input_label} files were found in the selected folder.")
+
+        converted: list[Path] = []
+        total = len(files)
+        for index, input_file in enumerate(files, start=1):
+            if self.cancel_event.is_set():
+                raise ConversionError(f"Conversion cancelled after {len(converted)} of {total} files.")
+            self.queue_step(2, f"Reading source file {index} of {total}: {input_file.name}")
+            output_file = output_directory / self.default_output_name(input_file)
+            self.queue_step(3, f"Writing {self.spec.output_tag} file {index} of {total}: {output_file.name}")
+            converted.append(self.convert_one(input_file, output_file))
+            self.root.after(0, lambda path=output_file: self.write_log(f"Created: {path}"))
+        return converted
+
+    def convert(self) -> None:
+        try:
+            input_path = Path(self.input_path.get())
+            self.queue_step(0, "Checking submitted upload", completed=1)
+            if self.cancel_event.is_set():
+                raise ConversionError("Conversion cancelled before processing started.")
+
+            self.queue_step(1, "Preparing output name and folder")
+            if self.mode.get() == "folder":
+                output_directory = self.output_directory_for(input_path)
+                self.root.after(0, lambda: self.write_log(f"Output folder: {output_directory}"))
+                converted = self.convert_folder(input_path, output_directory)
+                message = "Created:\n" + "\n".join(str(path) for path in converted)
+            else:
+                output_path = self.output_path_for(input_path)
+                self.root.after(0, lambda: self.write_log(f"Output file: {output_path}"))
+                if self.cancel_event.is_set():
+                    raise ConversionError("Conversion cancelled before the source file was read.")
+                self.queue_step(2, f"Reading source: {input_path.name}")
+                if self.cancel_event.is_set():
+                    raise ConversionError("Conversion cancelled before writing the output file.")
+                self.queue_step(3, f"Writing {self.spec.output_tag}: {output_path.name}")
+                created = self.convert_one(input_path, output_path)
+                message = f"Created:\n{created}"
+
+            if self.cancel_event.is_set():
+                message += "\n\nCancel was requested, but the active file had already completed."
+            self.queue_step(4, "Conversion complete", completed=5)
+            self.finish(message, success=True)
+        except ConversionError as error:
+            if self.cancel_event.is_set() or "cancelled" in str(error).lower():
+                self.finish(str(error), success=False, cancelled=True)
+            else:
+                self.finish(str(error), success=False)
+        except Exception as error:
+            self.finish(f"Unexpected error: {error}", success=False)
+
+    def finish(self, message: str, success: bool, cancelled: bool = False) -> None:
+        def update_ui() -> None:
+            self.progress.stop()
+            self.write_log(message)
+            if cancelled:
+                self.status.set("Cancelled")
+                self.render_timeline(detail="Conversion cancelled")
+            else:
+                self.status.set("Done" if success else "Failed")
+                if success:
+                    self.render_timeline(completed=5, detail="All steps complete")
+            self.convert_button.configure(state="normal")
+            self.cancel_button.configure(state="disabled")
+            self.is_converting = False
+            if success:
+                messagebox.showinfo("Conversion complete", message)
+            else:
+                messagebox.showerror("Conversion stopped" if cancelled else "Conversion failed", message)
+
+        self.root.after(0, update_ui)
+
+    def write_log(self, message: str) -> None:
+        self.log.insert("end", f"{message}\n")
+        self.log.see("end")
+
+
+def main() -> int:
+    root = tk.Tk()
+    ConverterApp(root)
+    root.mainloop()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
