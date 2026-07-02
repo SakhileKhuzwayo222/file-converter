@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import tkinter as tk
 from collections.abc import Callable
@@ -195,10 +196,14 @@ class ConverterApp:
         self.custom_name = tk.StringVar()
         self.suggested_name = tk.StringVar(value="Suggested output: choose a file first")
         self.status = tk.StringVar(value="Ready")
+        self.progress_value = tk.DoubleVar(value=0)
+        self.progress_text = tk.StringVar(value="0%")
 
         self.input_submitted = False
         self.cancel_event = threading.Event()
         self.is_converting = False
+        self.toast_window: tk.Toplevel | None = None
+        self.last_outputs: list[Path] = []
         self.step_titles = [
             "Input submitted",
             "Output name prepared",
@@ -254,11 +259,27 @@ class ConverterApp:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
 
-        self.main = tk.Frame(self.root, padx=24, pady=22)
-        self.main.grid(row=0, column=0, sticky="nsew")
+        self.shell = tk.Frame(self.root)
+        self.shell.grid(row=0, column=0, sticky="nsew")
+        self.shell.columnconfigure(0, weight=1)
+        self.shell.rowconfigure(0, weight=1)
+        self.register_background(self.shell, "background")
+
+        self.canvas = tk.Canvas(self.shell, highlightthickness=0, bd=0)
+        self.canvas.grid(row=0, column=0, sticky="nsew")
+        self.register_background(self.canvas, "background")
+
+        self.scrollbar = ttk.Scrollbar(self.shell, orient="vertical", command=self.canvas.yview)
+        self.scrollbar.grid(row=0, column=1, sticky="ns")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+
+        self.main = tk.Frame(self.canvas, padx=24, pady=22)
+        self.main_window = self.canvas.create_window((0, 0), window=self.main, anchor="nw")
         self.main.columnconfigure(0, weight=1)
         self.main.rowconfigure(6, weight=1)
         self.register_background(self.main, "background")
+        self.main.bind("<Configure>", self.update_scroll_region)
+        self.canvas.bind("<Configure>", self.resize_canvas_content)
 
         self.build_header()
         self.build_conversion_card()
@@ -267,6 +288,18 @@ class ConverterApp:
         self.build_options_card()
         self.build_action_area()
         self.build_status_area()
+
+    def update_scroll_region(self, event: tk.Event | None = None) -> None:
+        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+
+    def resize_canvas_content(self, event: tk.Event) -> None:
+        content_width = max(event.width, 620)
+        self.canvas.itemconfigure(self.main_window, width=content_width)
+        wrap_width = max(content_width - 180, 320)
+        if hasattr(self, "upload_hint"):
+            self.upload_hint.configure(wraplength=wrap_width)
+        if hasattr(self, "suggested_label"):
+            self.suggested_label.configure(wraplength=wrap_width)
 
     def build_header(self) -> None:
         header = tk.Frame(self.main)
@@ -434,8 +467,20 @@ class ConverterApp:
         self.cancel_button = ttk.Button(action_row, text="Cancel", style="Danger.TButton", command=self.request_cancel, state="disabled")
         self.cancel_button.grid(row=0, column=1, sticky="ew")
 
-        self.progress = ttk.Progressbar(action_row, mode="indeterminate", style="Accent.Horizontal.TProgressbar")
-        self.progress.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        progress_row = tk.Frame(action_row)
+        progress_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        progress_row.columnconfigure(0, weight=1)
+        self.register_background(progress_row, "background")
+
+        self.progress = ttk.Progressbar(
+            progress_row,
+            mode="determinate",
+            maximum=100,
+            variable=self.progress_value,
+            style="Accent.Horizontal.TProgressbar",
+        )
+        self.progress.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        ttk.Label(progress_row, textvariable=self.progress_text, style="Subtitle.TLabel").grid(row=0, column=1, sticky="e")
 
     def build_status_area(self) -> None:
         status_frame = tk.Frame(self.main, bd=0, highlightthickness=1)
@@ -620,12 +665,12 @@ class ConverterApp:
         lines: list[str] = []
         for index, title in enumerate(self.step_titles):
             if active_index == index:
-                marker = "[>]"
+                marker = "NOW "
             elif index < completed:
-                marker = "[OK]"
+                marker = "DONE"
             else:
-                marker = "[ ]"
-            lines.append(f"{marker} Step {index + 1}: {title}")
+                marker = "WAIT"
+            lines.append(f"{marker}  Step {index + 1}: {title}")
         if detail:
             lines.append("")
             lines.append(f"Now: {detail}")
@@ -637,9 +682,51 @@ class ConverterApp:
 
     def queue_step(self, active_index: int, detail: str, completed: int | None = None) -> None:
         completed_count = active_index if completed is None else completed
+        progress_points = [12, 28, 55, 82, 100]
         self.root.after(0, lambda: self.render_timeline(active_index, completed_count, detail))
         self.root.after(0, lambda: self.status.set(detail))
+        self.root.after(0, lambda: self.set_progress(progress_points[active_index], detail))
         self.root.after(0, lambda: self.write_log(f"Step {active_index + 1}: {detail}"))
+
+    def set_progress(self, value: float, detail: str | None = None) -> None:
+        bounded = max(0, min(100, value))
+        self.progress_value.set(bounded)
+        self.progress_text.set(f"{int(bounded)}%")
+        if detail:
+            self.status.set(detail)
+
+    def queue_progress(self, value: float, detail: str | None = None) -> None:
+        self.root.after(0, lambda: self.set_progress(value, detail))
+
+    def show_toast(self, title: str, message: str, duration: int = 2200) -> None:
+        if self.toast_window and self.toast_window.winfo_exists():
+            self.toast_window.destroy()
+
+        theme = self.theme
+        toast = tk.Toplevel(self.root)
+        self.toast_window = toast
+        toast.title(title)
+        toast.resizable(False, False)
+        toast.transient(self.root)
+        toast.configure(bg=theme.panel)
+        toast.attributes("-topmost", True)
+
+        frame = tk.Frame(toast, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=16, pady=12)
+        frame.grid(row=0, column=0, sticky="nsew")
+        tk.Label(frame, text=title, bg=theme.panel, fg=theme.text, font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w")
+        tk.Label(frame, text=message, bg=theme.panel, fg=theme.muted, font=("Segoe UI", 9), wraplength=300, justify="left").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=(4, 0),
+        )
+
+        self.root.update_idletasks()
+        toast.update_idletasks()
+        x = self.root.winfo_rootx() + max(self.root.winfo_width() - toast.winfo_reqwidth() - 28, 20)
+        y = self.root.winfo_rooty() + 78
+        toast.geometry(f"+{x}+{y}")
+        toast.after(duration, toast.destroy)
 
     def update_labels(self, clear_paths: bool = True) -> None:
         spec = self.spec
@@ -670,8 +757,14 @@ class ConverterApp:
         path = self.input_path.get().strip()
         if path:
             state = "submitted" if self.input_submitted else "selected"
-            self.upload_hint.configure(text=f"{state.title()}: {path}")
+            self.upload_hint.configure(text=f"{state.title()}: {self.display_path(Path(path))}")
         self.update_suggested_name()
+
+    def display_path(self, path: Path, max_length: int = 92) -> str:
+        text = str(path)
+        if len(text) <= max_length:
+            return text
+        return f"...{text[-(max_length - 3):]}"
 
     def update_rename_controls(self) -> None:
         folder_mode = self.mode.get() == "folder"
@@ -711,8 +804,10 @@ class ConverterApp:
             self.input_path.set(path)
             self.input_submitted = False
             self.status.set("Upload selected. Press Submit.")
+            self.set_progress(5, "Upload selected")
             self.render_timeline()
             self.update_upload_display()
+            self.show_toast("Upload selected", "Click Submit to confirm this input before converting.")
 
     def submit_input(self) -> None:
         path_text = self.input_path.get().strip()
@@ -737,13 +832,17 @@ class ConverterApp:
         self.input_submitted = True
         self.status.set("Upload submitted")
         self.update_upload_display()
+        self.set_progress(12, "Upload submitted")
         self.render_timeline(active_index=None, completed=1, detail=f"Submitted {path.name}")
         self.write_log(f"Submitted upload: {path}")
+        self.show_toast("Upload submitted", "Your input is ready. Choose a save folder or convert with the default location.")
 
     def choose_output_folder(self) -> None:
         path = filedialog.askdirectory(title="Choose output folder")
         if path:
             self.output_folder.set(path)
+            self.set_progress(max(self.progress_value.get(), 18), "Output folder selected")
+            self.show_toast("Save folder selected", self.display_path(Path(path)))
 
     def default_output_name(self, source: Path) -> Path:
         return Path(f"{source.stem} ({self.spec.output_tag}){self.spec.output_extension}")
@@ -781,9 +880,9 @@ class ConverterApp:
         self.is_converting = True
         self.convert_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
-        self.progress.start(10)
-        self.status.set("Starting")
+        self.set_progress(0, "Starting")
         self.write_log("Conversion started.")
+        self.show_toast("Conversion started", "Progress will update below while the file is being converted.")
 
         thread = threading.Thread(target=self.convert, daemon=True)
         thread.start()
@@ -794,6 +893,7 @@ class ConverterApp:
         self.cancel_event.set()
         self.status.set("Cancel requested")
         self.write_log("Cancel requested. The current file will finish if it is already being written.")
+        self.show_toast("Cancel requested", "The current file will finish if it is already being written.")
 
     def convert_one(self, input_path: Path, output_path: Path | None) -> Path:
         return self.spec.convert(
@@ -817,10 +917,14 @@ class ConverterApp:
         for index, input_file in enumerate(files, start=1):
             if self.cancel_event.is_set():
                 raise ConversionError(f"Conversion cancelled after {len(converted)} of {total} files.")
+            base_progress = 35 + ((index - 1) / total) * 48
             self.queue_step(2, f"Reading source file {index} of {total}: {input_file.name}")
+            self.queue_progress(base_progress, f"Reading file {index} of {total}")
             output_file = output_directory / self.default_output_name(input_file)
             self.queue_step(3, f"Writing {self.spec.output_tag} file {index} of {total}: {output_file.name}")
+            self.queue_progress(base_progress + (24 / total), f"Writing file {index} of {total}")
             converted.append(self.convert_one(input_file, output_file))
+            self.queue_progress(35 + (index / total) * 48, f"Completed file {index} of {total}")
             self.root.after(0, lambda path=output_file: self.write_log(f"Created: {path}"))
         return converted
 
