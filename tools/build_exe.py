@@ -113,6 +113,8 @@ def run_pyinstaller() -> None:
         "--hidden-import",
         "csv_to_excel.converter",
         "--hidden-import",
+        "csv_to_excel.external",
+        "--hidden-import",
         "csv_to_excel.gui",
         "--hidden-import",
         "csv_to_excel.office",

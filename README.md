@@ -12,8 +12,15 @@ It also shows interaction popups, a step-by-step conversion timeline, a determin
 - JSON to Excel `.xlsx`
 - PDF to Word `.docx`
 - TXT or Markdown to Word `.docx`
+- Word files `.doc`, `.docx`, `.docm`, `.dot`, `.dotx`, `.dotm`, `.rtf` to PDF or `.docx`
+- Excel files `.xls`, `.xlsx`, `.xlsm`, `.xlsb`, `.xlt`, `.xltx`, `.xltm` to PDF or `.xlsx`
+- PowerPoint files `.ppt`, `.pptx`, `.pptm`, `.pps`, `.ppsx`, `.ppsm`, `.pot`, `.potx`, `.potm` to PDF or `.pptx`
+- Audio files `.mp3`, `.wav`, `.m4a`, `.aac`, `.flac`, `.ogg`, `.wma` to MP3, WAV, M4A, FLAC, or OGG
+- Video files `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.wmv`, `.mpeg`, `.mpg` to MP4, MOV, MKV, WEBM, or MP3 audio
 
 PDF conversion extracts readable text. Scanned or image-only PDFs need OCR first.
+Office-to-PDF and legacy Office conversions need Microsoft Office installed on Windows.
+Audio and video conversions need FFmpeg installed and available in `PATH`.
 
 ## Setup
 
@@ -36,9 +43,9 @@ START FILE CONVERTER.bat
 
 Then:
 
-1. Pick the conversion type.
+1. Pick **Convert from** and **Convert to**.
 2. Choose a single file or a folder of files.
-3. Click the plus box in **Upload**, then click **Submit**.
+3. Click the plus box under the file type selection, then click **Submit**.
 4. Choose a save folder.
 5. Choose whether to rename the output file.
 6. Click **Convert**.
@@ -74,6 +81,8 @@ Notes:
 - The `.exe` may take a few seconds to open because it is a one-file bundle.
 - Windows may show a SmartScreen warning for unsigned apps. Choose **More info** and **Run anyway** if you trust the file.
 - Some antivirus tools are cautious with newly built PyInstaller apps. Signing the app with a code-signing certificate is the professional fix.
+- Media conversion works on computers that have FFmpeg installed.
+- Office-to-PDF and legacy Office conversions work on computers that have Microsoft Office installed.
 
 ## Command Line Examples
 

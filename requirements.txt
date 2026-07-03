@@ -1,3 +1,7 @@
 # This project uses only Python's standard library.
 # Optional for stronger PDF text extraction:
 # pypdf>=4.0.0
+#
+# Optional external tools:
+# - Microsoft Office for Word/Excel/PowerPoint to PDF or modern Office formats.
+# - FFmpeg for audio and video conversion.

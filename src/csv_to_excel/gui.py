@@ -15,6 +15,17 @@ from .converter import (
     convert_tsv_to_excel,
     files_in_directory,
 )
+from .external import (
+    AUDIO_EXTENSIONS,
+    EXCEL_EXTENSIONS,
+    POWERPOINT_EXTENSIONS,
+    VIDEO_EXTENSIONS,
+    WORD_EXTENSIONS,
+    convert_excel_with_office,
+    convert_media_with_ffmpeg,
+    convert_powerpoint_with_office,
+    convert_word_with_office,
+)
 from .office import convert_pdf_to_word, convert_text_to_word
 
 
@@ -123,6 +134,70 @@ def text_to_word(input_path: Path, output_path: Path | None, encoding: str, deli
     return convert_text_to_word(input_path, output_path, encoding=encoding, overwrite=overwrite)
 
 
+def word_to_pdf(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_word_with_office(input_path, output_path, ".pdf", overwrite)
+
+
+def word_to_docx(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_word_with_office(input_path, output_path, ".docx", overwrite)
+
+
+def excel_to_pdf(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_excel_with_office(input_path, output_path, ".pdf", overwrite)
+
+
+def excel_to_xlsx(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_excel_with_office(input_path, output_path, ".xlsx", overwrite)
+
+
+def powerpoint_to_pdf(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_powerpoint_with_office(input_path, output_path, ".pdf", overwrite)
+
+
+def powerpoint_to_pptx(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_powerpoint_with_office(input_path, output_path, ".pptx", overwrite)
+
+
+def audio_to_mp3(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_media_with_ffmpeg(input_path, output_path, ".mp3", AUDIO_EXTENSIONS, overwrite)
+
+
+def audio_to_wav(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_media_with_ffmpeg(input_path, output_path, ".wav", AUDIO_EXTENSIONS, overwrite)
+
+
+def audio_to_m4a(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_media_with_ffmpeg(input_path, output_path, ".m4a", AUDIO_EXTENSIONS, overwrite)
+
+
+def audio_to_flac(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_media_with_ffmpeg(input_path, output_path, ".flac", AUDIO_EXTENSIONS, overwrite)
+
+
+def audio_to_ogg(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_media_with_ffmpeg(input_path, output_path, ".ogg", AUDIO_EXTENSIONS, overwrite)
+
+
+def video_to_mp4(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_media_with_ffmpeg(input_path, output_path, ".mp4", VIDEO_EXTENSIONS, overwrite)
+
+
+def video_to_mov(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_media_with_ffmpeg(input_path, output_path, ".mov", VIDEO_EXTENSIONS, overwrite)
+
+
+def video_to_mkv(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_media_with_ffmpeg(input_path, output_path, ".mkv", VIDEO_EXTENSIONS, overwrite)
+
+
+def video_to_webm(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_media_with_ffmpeg(input_path, output_path, ".webm", VIDEO_EXTENSIONS, overwrite)
+
+
+def video_to_mp3(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_media_with_ffmpeg(input_path, output_path, ".mp3", VIDEO_EXTENSIONS, overwrite)
+
+
 CONVERSIONS = [
     ConversionSpec(
         from_label="CSV (.csv)",
@@ -184,6 +259,198 @@ CONVERSIONS = [
         supports_delimiter=False,
         convert=text_to_word,
     ),
+    ConversionSpec(
+        from_label="Word files (.docx, .doc, .docm, .rtf)",
+        to_label="PDF Document (.pdf)",
+        input_label="Word",
+        input_extensions=WORD_EXTENSIONS,
+        output_extension=".pdf",
+        output_description="PDF document",
+        output_tag="PDF",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=word_to_pdf,
+    ),
+    ConversionSpec(
+        from_label="Word files (.docx, .doc, .docm, .rtf)",
+        to_label="Word Document (.docx)",
+        input_label="Word",
+        input_extensions=WORD_EXTENSIONS,
+        output_extension=".docx",
+        output_description="Word document",
+        output_tag="Word",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=word_to_docx,
+    ),
+    ConversionSpec(
+        from_label="Excel files (.xlsx, .xls, .xlsm, .xlsb)",
+        to_label="PDF Document (.pdf)",
+        input_label="Excel",
+        input_extensions=EXCEL_EXTENSIONS,
+        output_extension=".pdf",
+        output_description="PDF document",
+        output_tag="PDF",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=excel_to_pdf,
+    ),
+    ConversionSpec(
+        from_label="Excel files (.xlsx, .xls, .xlsm, .xlsb)",
+        to_label="Excel Workbook (.xlsx)",
+        input_label="Excel",
+        input_extensions=EXCEL_EXTENSIONS,
+        output_extension=".xlsx",
+        output_description="Excel workbook",
+        output_tag="Excel",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=excel_to_xlsx,
+    ),
+    ConversionSpec(
+        from_label="PowerPoint files (.pptx, .ppt, .pptm, .ppsx)",
+        to_label="PDF Document (.pdf)",
+        input_label="PowerPoint",
+        input_extensions=POWERPOINT_EXTENSIONS,
+        output_extension=".pdf",
+        output_description="PDF document",
+        output_tag="PDF",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=powerpoint_to_pdf,
+    ),
+    ConversionSpec(
+        from_label="PowerPoint files (.pptx, .ppt, .pptm, .ppsx)",
+        to_label="PowerPoint Presentation (.pptx)",
+        input_label="PowerPoint",
+        input_extensions=POWERPOINT_EXTENSIONS,
+        output_extension=".pptx",
+        output_description="PowerPoint presentation",
+        output_tag="PowerPoint",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=powerpoint_to_pptx,
+    ),
+    ConversionSpec(
+        from_label="Audio files (.mp3, .wav, .m4a, .flac)",
+        to_label="MP3 Audio (.mp3)",
+        input_label="audio",
+        input_extensions=AUDIO_EXTENSIONS,
+        output_extension=".mp3",
+        output_description="MP3 audio",
+        output_tag="MP3",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=audio_to_mp3,
+    ),
+    ConversionSpec(
+        from_label="Audio files (.mp3, .wav, .m4a, .flac)",
+        to_label="WAV Audio (.wav)",
+        input_label="audio",
+        input_extensions=AUDIO_EXTENSIONS,
+        output_extension=".wav",
+        output_description="WAV audio",
+        output_tag="WAV",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=audio_to_wav,
+    ),
+    ConversionSpec(
+        from_label="Audio files (.mp3, .wav, .m4a, .flac)",
+        to_label="M4A Audio (.m4a)",
+        input_label="audio",
+        input_extensions=AUDIO_EXTENSIONS,
+        output_extension=".m4a",
+        output_description="M4A audio",
+        output_tag="M4A",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=audio_to_m4a,
+    ),
+    ConversionSpec(
+        from_label="Audio files (.mp3, .wav, .m4a, .flac)",
+        to_label="FLAC Audio (.flac)",
+        input_label="audio",
+        input_extensions=AUDIO_EXTENSIONS,
+        output_extension=".flac",
+        output_description="FLAC audio",
+        output_tag="FLAC",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=audio_to_flac,
+    ),
+    ConversionSpec(
+        from_label="Audio files (.mp3, .wav, .m4a, .flac)",
+        to_label="OGG Audio (.ogg)",
+        input_label="audio",
+        input_extensions=AUDIO_EXTENSIONS,
+        output_extension=".ogg",
+        output_description="OGG audio",
+        output_tag="OGG",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=audio_to_ogg,
+    ),
+    ConversionSpec(
+        from_label="Video files (.mp4, .mov, .mkv, .avi)",
+        to_label="MP4 Video (.mp4)",
+        input_label="video",
+        input_extensions=VIDEO_EXTENSIONS,
+        output_extension=".mp4",
+        output_description="MP4 video",
+        output_tag="MP4",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=video_to_mp4,
+    ),
+    ConversionSpec(
+        from_label="Video files (.mp4, .mov, .mkv, .avi)",
+        to_label="MOV Video (.mov)",
+        input_label="video",
+        input_extensions=VIDEO_EXTENSIONS,
+        output_extension=".mov",
+        output_description="MOV video",
+        output_tag="MOV",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=video_to_mov,
+    ),
+    ConversionSpec(
+        from_label="Video files (.mp4, .mov, .mkv, .avi)",
+        to_label="MKV Video (.mkv)",
+        input_label="video",
+        input_extensions=VIDEO_EXTENSIONS,
+        output_extension=".mkv",
+        output_description="MKV video",
+        output_tag="MKV",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=video_to_mkv,
+    ),
+    ConversionSpec(
+        from_label="Video files (.mp4, .mov, .mkv, .avi)",
+        to_label="WEBM Video (.webm)",
+        input_label="video",
+        input_extensions=VIDEO_EXTENSIONS,
+        output_extension=".webm",
+        output_description="WEBM video",
+        output_tag="WEBM",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=video_to_webm,
+    ),
+    ConversionSpec(
+        from_label="Video files (.mp4, .mov, .mkv, .avi)",
+        to_label="MP3 Audio (.mp3)",
+        input_label="video",
+        input_extensions=VIDEO_EXTENSIONS,
+        output_extension=".mp3",
+        output_description="MP3 audio",
+        output_tag="MP3",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=video_to_mp3,
+    ),
 ]
 
 FROM_FORMATS = list(dict.fromkeys(conversion.from_label for conversion in CONVERSIONS))
@@ -231,7 +498,7 @@ class ConverterApp:
             "Input submitted",
             "Output name prepared",
             "Source read",
-            "Office document written",
+            "Converted file written",
             "Finished",
         ]
 
