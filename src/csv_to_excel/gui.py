@@ -280,6 +280,9 @@ class ConverterApp:
         self.register_background(self.main, "background")
         self.main.bind("<Configure>", self.update_scroll_region)
         self.canvas.bind("<Configure>", self.resize_canvas_content)
+        self.root.bind_all("<MouseWheel>", self.on_page_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", self.on_page_mousewheel, add="+")
+        self.root.bind_all("<Button-5>", self.on_page_mousewheel, add="+")
 
         self.build_header()
         self.build_conversion_card()
@@ -300,6 +303,30 @@ class ConverterApp:
             self.upload_hint.configure(wraplength=wrap_width)
         if hasattr(self, "suggested_label"):
             self.suggested_label.configure(wraplength=wrap_width)
+
+    def on_page_mousewheel(self, event: tk.Event) -> None:
+        try:
+            if event.widget.winfo_toplevel() != self.root:
+                return
+        except tk.TclError:
+            return
+
+        top, bottom = self.canvas.yview()
+        if top <= 0 and bottom >= 1:
+            return
+
+        if getattr(event, "num", None) == 4:
+            units = -3
+        elif getattr(event, "num", None) == 5:
+            units = 3
+        else:
+            delta = getattr(event, "delta", 0)
+            if not delta:
+                return
+            units = -int(delta / 120)
+            if units == 0:
+                units = -1 if delta > 0 else 1
+        self.canvas.yview_scroll(units, "units")
 
     def build_header(self) -> None:
         header = tk.Frame(self.main)
