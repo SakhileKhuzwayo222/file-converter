@@ -43,35 +43,35 @@ class AppTheme:
 
 THEMES = {
     "light": AppTheme(
-        background="#f5f7fb",
+        background="#f4f7fb",
         panel="#ffffff",
-        panel_alt="#eef6f4",
+        panel_alt="#f0fdfa",
         entry="#ffffff",
-        text="#19202a",
-        muted="#607083",
-        border="#d7dde7",
-        accent="#0f766e",
+        text="#0f172a",
+        muted="#64748b",
+        border="#d9e4ec",
+        accent="#0d9488",
         accent_hover="#115e59",
         accent_text="#ffffff",
-        danger="#dc2626",
-        danger_hover="#b91c1c",
+        danger="#e11d48",
+        danger_hover="#be123c",
         log_background="#111827",
         log_text="#dbeafe",
-        selection="#c7eee8",
+        selection="#ccfbf1",
     ),
     "dark": AppTheme(
-        background="#111113",
-        panel="#1c1f26",
-        panel_alt="#22302d",
-        entry="#14171d",
-        text="#f4f7fb",
-        muted="#9aa7b5",
-        border="#343a46",
+        background="#121212",
+        panel="#1e2027",
+        panel_alt="#182d2b",
+        entry="#151820",
+        text="#f8fafc",
+        muted="#a3aebc",
+        border="#343945",
         accent="#2dd4bf",
         accent_hover="#5eead4",
-        accent_text="#071412",
-        danger="#f87171",
-        danger_hover="#fca5a5",
+        accent_text="#06201d",
+        danger="#fb7185",
+        danger_hover="#fda4af",
         log_background="#090b10",
         log_text="#c7d2fe",
         selection="#164e63",
@@ -193,7 +193,7 @@ class ConverterApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("File Converter")
-        self.root.minsize(820, 680)
+        self.root.minsize(940, 720)
 
         self.style = ttk.Style()
         self.theme_name = tk.StringVar(value="light")
@@ -300,7 +300,7 @@ class ConverterApp:
         self.scrollbar.grid(row=0, column=1, sticky="ns")
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
 
-        self.main = tk.Frame(self.canvas, padx=24, pady=22)
+        self.main = tk.Frame(self.canvas, padx=34, pady=28)
         self.main_window = self.canvas.create_window((0, 0), window=self.main, anchor="nw")
         self.main.columnconfigure(0, weight=1)
         self.register_background(self.main, "background")
@@ -312,7 +312,6 @@ class ConverterApp:
 
         self.build_header()
         self.build_conversion_card()
-        self.build_upload_card()
         self.build_output_card()
         self.build_options_card()
         self.build_action_area()
@@ -354,17 +353,17 @@ class ConverterApp:
         self.canvas.yview_scroll(units, "units")
 
     def build_header(self) -> None:
-        header = tk.Frame(self.main)
+        header = tk.Frame(self.main, bd=0, highlightthickness=1, padx=22, pady=18)
         header.grid(row=0, column=0, sticky="ew", pady=(0, 18))
         header.columnconfigure(1, weight=1)
-        self.register_background(header, "background")
+        self.card_frames.append(header)
 
         self.logo_canvas = tk.Canvas(header, width=54, height=54, highlightthickness=0, bd=0)
         self.logo_canvas.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 14))
-        self.register_background(self.logo_canvas, "background")
+        self.register_background(self.logo_canvas, "panel")
 
         ttk.Label(header, text="File Converter", style="Title.TLabel").grid(row=0, column=1, sticky="sw")
-        ttk.Label(header, text="Upload, rename, convert, and track every step", style="Subtitle.TLabel").grid(
+        ttk.Label(header, text="Conversion workspace", style="HeaderSubtitle.TLabel").grid(
             row=1,
             column=1,
             sticky="nw",
@@ -374,42 +373,57 @@ class ConverterApp:
 
     def make_card(self, row: int, title: str) -> tk.Frame:
         card = tk.Frame(self.main, bd=0, highlightthickness=1)
-        card.grid(row=row, column=0, sticky="ew", pady=(0, 14))
+        card.grid(row=row, column=0, sticky="ew", pady=(0, 16))
         card.columnconfigure(0, weight=1)
         self.card_frames.append(card)
 
-        ttk.Label(card, text=title, style="Section.TLabel").grid(row=0, column=0, sticky="w", padx=18, pady=(14, 8))
+        ttk.Label(card, text=title, style="Section.TLabel").grid(row=0, column=0, sticky="w", padx=22, pady=(18, 10))
         body = tk.Frame(card)
-        body.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 16))
+        body.grid(row=1, column=0, sticky="ew", padx=22, pady=(0, 20))
         body.columnconfigure(1, weight=1)
         self.register_background(body, "panel")
         return body
 
     def build_conversion_card(self) -> None:
-        body = self.make_card(1, "Conversion")
+        body = self.make_card(1, "Select file type")
+        body.columnconfigure(0, weight=1)
 
-        ttk.Label(body, text="Convert from", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
+        selector_row = tk.Frame(body)
+        selector_row.grid(row=0, column=0, sticky="ew")
+        selector_row.columnconfigure(0, weight=1)
+        selector_row.columnconfigure(1, weight=1)
+        self.register_background(selector_row, "panel")
+
+        from_group = tk.Frame(selector_row)
+        from_group.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        from_group.columnconfigure(0, weight=1)
+        self.register_background(from_group, "panel")
+        ttk.Label(from_group, text="Convert from", style="FieldLabel.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
         self.from_menu = ttk.Combobox(
-            body,
+            from_group,
             textvariable=self.from_format,
             values=FROM_FORMATS,
             state="readonly",
         )
-        self.from_menu.grid(row=0, column=1, sticky="ew", pady=(0, 10))
+        self.from_menu.grid(row=1, column=0, sticky="ew")
         self.from_menu.bind("<<ComboboxSelected>>", lambda event: self.update_target_choices())
 
-        ttk.Label(body, text="Convert to", style="Card.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
+        to_group = tk.Frame(selector_row)
+        to_group.grid(row=0, column=1, sticky="ew", padx=(10, 0))
+        to_group.columnconfigure(0, weight=1)
+        self.register_background(to_group, "panel")
+        ttk.Label(to_group, text="Convert to", style="FieldLabel.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
         self.to_menu = ttk.Combobox(
-            body,
+            to_group,
             textvariable=self.to_format,
             values=self.target_labels_for_source(self.from_format.get()),
             state="readonly",
         )
-        self.to_menu.grid(row=1, column=1, sticky="ew", pady=(0, 10))
+        self.to_menu.grid(row=1, column=0, sticky="ew")
         self.to_menu.bind("<<ComboboxSelected>>", lambda event: self.update_labels())
 
         mode_row = tk.Frame(body)
-        mode_row.grid(row=2, column=1, sticky="w")
+        mode_row.grid(row=1, column=0, sticky="w", pady=(14, 0))
         self.register_background(mode_row, "panel")
         ttk.Radiobutton(
             mode_row,
@@ -428,16 +442,22 @@ class ConverterApp:
             command=self.update_labels,
         ).grid(row=0, column=1, sticky="w")
 
-    def build_upload_card(self) -> None:
-        body = self.make_card(2, "Upload")
-        body.columnconfigure(0, weight=1)
+        self.build_upload_section(body, 2)
 
-        self.upload_box = tk.Frame(body, bd=0, highlightthickness=1, padx=18, pady=16, cursor="hand2")
-        self.upload_box.grid(row=0, column=0, sticky="ew")
+    def build_upload_section(self, parent: tk.Widget, row: int) -> None:
+        upload_section = tk.Frame(parent)
+        upload_section.grid(row=row, column=0, sticky="ew", pady=(18, 0))
+        upload_section.columnconfigure(0, weight=1)
+        self.register_background(upload_section, "panel")
+
+        ttk.Label(upload_section, text="Upload source", style="FieldLabel.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        self.upload_box = tk.Frame(upload_section, bd=0, highlightthickness=1, padx=20, pady=20, cursor="hand2")
+        self.upload_box.grid(row=1, column=0, sticky="ew")
         self.upload_box.columnconfigure(1, weight=1)
         self.register_background(self.upload_box, "panel_alt")
 
-        self.plus_label = tk.Label(self.upload_box, text="+", font=("Segoe UI", 34, "bold"), cursor="hand2")
+        self.plus_label = tk.Label(self.upload_box, text="+", font=("Segoe UI", 38, "bold"), cursor="hand2")
         self.plus_label.grid(row=0, column=0, rowspan=2, padx=(0, 16))
         self.register_background(self.plus_label, "panel_alt")
 
@@ -446,19 +466,19 @@ class ConverterApp:
         self.upload_hint = ttk.Label(self.upload_box, text="Click the plus box to choose a file.", style="UploadHint.TLabel")
         self.upload_hint.grid(row=1, column=1, sticky="nw", pady=(4, 0))
 
-        self.submit_row = tk.Frame(body)
-        self.submit_row.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        self.submit_row = tk.Frame(upload_section)
+        self.submit_row.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         self.submit_row.columnconfigure(0, weight=1)
         self.register_background(self.submit_row, "panel")
 
         self.submit_button = ttk.Button(self.submit_row, text="Submit", style="Accent.TButton", command=self.submit_input)
-        self.submit_button.grid(row=0, column=0, sticky="w", ipadx=28)
+        self.submit_button.grid(row=0, column=0, sticky="w", ipadx=30)
 
         for widget in (self.upload_box, self.plus_label, self.upload_title, self.upload_hint):
             widget.bind("<Button-1>", lambda event: self.choose_input())
 
     def build_output_card(self) -> None:
-        body = self.make_card(3, "Output")
+        body = self.make_card(2, "Output")
 
         ttk.Label(body, text="Save folder", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
         self.output_entry = ttk.Entry(body, textvariable=self.output_folder)
@@ -497,7 +517,7 @@ class ConverterApp:
         self.suggested_label.grid(row=3, column=1, columnspan=2, sticky="w", pady=(8, 0))
 
     def build_options_card(self) -> None:
-        body = self.make_card(4, "Options")
+        body = self.make_card(3, "Options")
         body.columnconfigure(3, weight=1)
 
         self.encoding_label = ttk.Label(body, text="Encoding", style="Card.TLabel")
@@ -519,10 +539,10 @@ class ConverterApp:
         self.overwrite_check.grid(row=1, column=0, columnspan=4, sticky="w", pady=(12, 0))
 
     def build_action_area(self) -> None:
-        action_row = tk.Frame(self.main)
-        action_row.grid(row=5, column=0, sticky="ew", pady=(0, 14))
+        action_row = tk.Frame(self.main, bd=0, highlightthickness=1, padx=20, pady=18)
+        action_row.grid(row=4, column=0, sticky="ew", pady=(0, 16))
         action_row.columnconfigure(0, weight=1)
-        self.register_background(action_row, "background")
+        self.card_frames.append(action_row)
 
         self.convert_button = ttk.Button(action_row, text="Convert", style="Accent.TButton", command=self.start_conversion)
         self.convert_button.grid(row=0, column=0, sticky="ew", padx=(0, 10))
@@ -550,13 +570,15 @@ class ConverterApp:
         self.upload_box.configure(highlightbackground=theme.border, highlightcolor=theme.accent)
 
         self.style.configure(".", font=("Segoe UI", 10), background=theme.background, foreground=theme.text)
-        self.style.configure("Title.TLabel", font=("Segoe UI", 22, "bold"), background=theme.background, foreground=theme.text)
+        self.style.configure("Title.TLabel", font=("Segoe UI", 24, "bold"), background=theme.panel, foreground=theme.text)
+        self.style.configure("HeaderSubtitle.TLabel", font=("Segoe UI", 10), background=theme.panel, foreground=theme.muted)
         self.style.configure("Subtitle.TLabel", font=("Segoe UI", 10), background=theme.background, foreground=theme.muted)
-        self.style.configure("Section.TLabel", font=("Segoe UI", 10, "bold"), background=theme.panel, foreground=theme.text)
+        self.style.configure("Section.TLabel", font=("Segoe UI", 12, "bold"), background=theme.panel, foreground=theme.text)
         self.style.configure("Card.TLabel", background=theme.panel, foreground=theme.text)
+        self.style.configure("FieldLabel.TLabel", font=("Segoe UI", 9, "bold"), background=theme.panel, foreground=theme.muted)
         self.style.configure("Muted.TLabel", background=theme.panel, foreground=theme.muted)
-        self.style.configure("UploadTitle.TLabel", font=("Segoe UI", 12, "bold"), background=theme.panel_alt, foreground=theme.text)
-        self.style.configure("UploadHint.TLabel", background=theme.panel_alt, foreground=theme.muted)
+        self.style.configure("UploadTitle.TLabel", font=("Segoe UI", 14, "bold"), background=theme.panel_alt, foreground=theme.text)
+        self.style.configure("UploadHint.TLabel", font=("Segoe UI", 10), background=theme.panel_alt, foreground=theme.muted)
 
         self.style.configure(
             "TEntry",
@@ -566,7 +588,7 @@ class ConverterApp:
             lightcolor=theme.border,
             darkcolor=theme.border,
             insertcolor=theme.text,
-            padding=8,
+            padding=10,
         )
         self.style.map(
             "TEntry",
@@ -582,7 +604,7 @@ class ConverterApp:
             bordercolor=theme.border,
             lightcolor=theme.border,
             darkcolor=theme.border,
-            padding=8,
+            padding=10,
         )
         self.style.map(
             "TCombobox",
@@ -620,7 +642,7 @@ class ConverterApp:
             foreground=theme.accent_text,
             bordercolor=theme.accent,
             focusthickness=0,
-            padding=(14, 12),
+            padding=(16, 13),
         )
         self.style.map(
             "Accent.TButton",
@@ -645,15 +667,15 @@ class ConverterApp:
             background=theme.panel_alt,
             foreground=theme.text,
             bordercolor=theme.border,
-            padding=(12, 8),
+            padding=(14, 10),
         )
         self.style.map("Secondary.TButton", background=[("active", theme.selection)])
         self.style.configure(
             "Ghost.TButton",
-            background=theme.background,
+            background=theme.panel,
             foreground=theme.text,
             bordercolor=theme.border,
-            padding=(12, 8),
+            padding=(14, 10),
         )
         self.style.map("Ghost.TButton", background=[("active", theme.panel_alt)])
 
@@ -661,7 +683,7 @@ class ConverterApp:
         theme = self.theme
         canvas = self.logo_canvas
         canvas.delete("all")
-        canvas.configure(bg=theme.background)
+        canvas.configure(bg=theme.panel)
         canvas.create_oval(5, 5, 21, 21, fill="#14b8a6", outline="")
         canvas.create_oval(33, 5, 49, 21, fill="#14b8a6", outline="")
         canvas.create_oval(5, 33, 21, 49, fill="#115e59", outline="")
