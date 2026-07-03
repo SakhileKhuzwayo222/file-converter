@@ -81,7 +81,8 @@ THEMES = {
 
 @dataclass(frozen=True)
 class ConversionSpec:
-    name: str
+    from_label: str
+    to_label: str
     input_label: str
     input_extensions: tuple[str, ...]
     output_extension: str
@@ -90,6 +91,10 @@ class ConversionSpec:
     supports_encoding: bool
     supports_delimiter: bool
     convert: ConverterFunction
+
+    @property
+    def name(self) -> str:
+        return f"{self.from_label} to {self.to_label}"
 
 
 def csv_to_excel(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
@@ -120,7 +125,8 @@ def text_to_word(input_path: Path, output_path: Path | None, encoding: str, deli
 
 CONVERSIONS = [
     ConversionSpec(
-        name="CSV to Excel (.xlsx)",
+        from_label="CSV (.csv)",
+        to_label="Excel Workbook (.xlsx)",
         input_label="CSV",
         input_extensions=(".csv",),
         output_extension=".xlsx",
@@ -131,7 +137,8 @@ CONVERSIONS = [
         convert=csv_to_excel,
     ),
     ConversionSpec(
-        name="TSV to Excel (.xlsx)",
+        from_label="TSV (.tsv)",
+        to_label="Excel Workbook (.xlsx)",
         input_label="TSV",
         input_extensions=(".tsv",),
         output_extension=".xlsx",
@@ -142,7 +149,8 @@ CONVERSIONS = [
         convert=tsv_to_excel,
     ),
     ConversionSpec(
-        name="JSON to Excel (.xlsx)",
+        from_label="JSON (.json)",
+        to_label="Excel Workbook (.xlsx)",
         input_label="JSON",
         input_extensions=(".json",),
         output_extension=".xlsx",
@@ -153,7 +161,8 @@ CONVERSIONS = [
         convert=json_to_excel,
     ),
     ConversionSpec(
-        name="PDF to Word (.docx)",
+        from_label="PDF (.pdf)",
+        to_label="Word Document (.docx)",
         input_label="PDF",
         input_extensions=(".pdf",),
         output_extension=".docx",
@@ -164,7 +173,8 @@ CONVERSIONS = [
         convert=pdf_to_word,
     ),
     ConversionSpec(
-        name="Text or Markdown to Word (.docx)",
+        from_label="Text or Markdown (.txt, .md)",
+        to_label="Word Document (.docx)",
         input_label="text",
         input_extensions=(".txt", ".md"),
         output_extension=".docx",
@@ -176,6 +186,8 @@ CONVERSIONS = [
     ),
 ]
 
+FROM_FORMATS = list(dict.fromkeys(conversion.from_label for conversion in CONVERSIONS))
+
 
 class ConverterApp:
     def __init__(self, root: tk.Tk) -> None:
@@ -185,7 +197,8 @@ class ConverterApp:
 
         self.style = ttk.Style()
         self.theme_name = tk.StringVar(value="light")
-        self.conversion_name = tk.StringVar(value=CONVERSIONS[0].name)
+        self.from_format = tk.StringVar(value=CONVERSIONS[0].from_label)
+        self.to_format = tk.StringVar(value=CONVERSIONS[0].to_label)
         self.mode = tk.StringVar(value="file")
         self.input_path = tk.StringVar()
         self.output_folder = tk.StringVar()
@@ -239,9 +252,13 @@ class ConverterApp:
     @property
     def spec(self) -> ConversionSpec:
         for conversion in CONVERSIONS:
-            if conversion.name == self.conversion_name.get():
+            if conversion.from_label == self.from_format.get() and conversion.to_label == self.to_format.get():
                 return conversion
-        return CONVERSIONS[0]
+        matching_sources = [conversion for conversion in CONVERSIONS if conversion.from_label == self.from_format.get()]
+        return matching_sources[0] if matching_sources else CONVERSIONS[0]
+
+    def target_labels_for_source(self, source_label: str) -> list[str]:
+        return [conversion.to_label for conversion in CONVERSIONS if conversion.from_label == source_label]
 
     def create_window_icon(self) -> tk.PhotoImage:
         icon = tk.PhotoImage(width=64, height=64)
@@ -371,18 +388,28 @@ class ConverterApp:
     def build_conversion_card(self) -> None:
         body = self.make_card(1, "Conversion")
 
-        ttk.Label(body, text="Type", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
-        self.conversion_menu = ttk.Combobox(
+        ttk.Label(body, text="Convert from", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
+        self.from_menu = ttk.Combobox(
             body,
-            textvariable=self.conversion_name,
-            values=[conversion.name for conversion in CONVERSIONS],
+            textvariable=self.from_format,
+            values=FROM_FORMATS,
             state="readonly",
         )
-        self.conversion_menu.grid(row=0, column=1, sticky="ew", pady=(0, 10))
-        self.conversion_menu.bind("<<ComboboxSelected>>", lambda event: self.update_labels())
+        self.from_menu.grid(row=0, column=1, sticky="ew", pady=(0, 10))
+        self.from_menu.bind("<<ComboboxSelected>>", lambda event: self.update_target_choices())
+
+        ttk.Label(body, text="Convert to", style="Card.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
+        self.to_menu = ttk.Combobox(
+            body,
+            textvariable=self.to_format,
+            values=self.target_labels_for_source(self.from_format.get()),
+            state="readonly",
+        )
+        self.to_menu.grid(row=1, column=1, sticky="ew", pady=(0, 10))
+        self.to_menu.bind("<<ComboboxSelected>>", lambda event: self.update_labels())
 
         mode_row = tk.Frame(body)
-        mode_row.grid(row=1, column=1, sticky="w")
+        mode_row.grid(row=2, column=1, sticky="w")
         self.register_background(mode_row, "panel")
         ttk.Radiobutton(
             mode_row,
@@ -971,6 +998,13 @@ class ConverterApp:
         y = self.root.winfo_rooty() + 78
         toast.geometry(f"+{x}+{y}")
         toast.after(duration, toast.destroy)
+
+    def update_target_choices(self, clear_paths: bool = True) -> None:
+        targets = self.target_labels_for_source(self.from_format.get())
+        self.to_menu.configure(values=targets)
+        if self.to_format.get() not in targets:
+            self.to_format.set(targets[0] if targets else "")
+        self.update_labels(clear_paths=clear_paths)
 
     def update_labels(self, clear_paths: bool = True) -> None:
         spec = self.spec
