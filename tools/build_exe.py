@@ -10,6 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ASSETS_DIR = PROJECT_ROOT / "assets"
 ICON_PATH = ASSETS_DIR / "file_converter.ico"
 ENTRY_POINT = PROJECT_ROOT / "run_gui.py"
+SRC_PATH = PROJECT_ROOT / "src"
 
 
 def color_at(x: int, y: int) -> tuple[int, int, int, int]:
@@ -105,6 +106,16 @@ def run_pyinstaller() -> None:
         "File Converter",
         "--icon",
         str(ICON_PATH),
+        "--paths",
+        str(SRC_PATH),
+        "--hidden-import",
+        "csv_to_excel",
+        "--hidden-import",
+        "csv_to_excel.converter",
+        "--hidden-import",
+        "csv_to_excel.gui",
+        "--hidden-import",
+        "csv_to_excel.office",
         str(ENTRY_POINT),
     ]
     subprocess.run(command, cwd=PROJECT_ROOT, check=True)
