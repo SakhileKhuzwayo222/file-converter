@@ -203,6 +203,16 @@ class ConverterApp:
         self.cancel_event = threading.Event()
         self.is_converting = False
         self.toast_window: tk.Toplevel | None = None
+        self.status_popup: tk.Toplevel | None = None
+        self.status_stage_canvas: tk.Canvas | None = None
+        self.status_log: tk.Text | None = None
+        self.status_popup_panels: list[tk.Frame] = []
+        self.status_log_lines: list[str] = []
+        self.active_step_index: int | None = None
+        self.completed_step_count = 0
+        self.current_step_detail = ""
+        self.animation_frame = 0
+        self.animation_job: str | None = None
         self.last_outputs: list[Path] = []
         self.step_titles = [
             "Input submitted",
@@ -276,7 +286,6 @@ class ConverterApp:
         self.main = tk.Frame(self.canvas, padx=24, pady=22)
         self.main_window = self.canvas.create_window((0, 0), window=self.main, anchor="nw")
         self.main.columnconfigure(0, weight=1)
-        self.main.rowconfigure(6, weight=1)
         self.register_background(self.main, "background")
         self.main.bind("<Configure>", self.update_scroll_region)
         self.canvas.bind("<Configure>", self.resize_canvas_content)
@@ -290,7 +299,6 @@ class ConverterApp:
         self.build_output_card()
         self.build_options_card()
         self.build_action_area()
-        self.build_status_area()
 
     def update_scroll_region(self, event: tk.Event | None = None) -> None:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -494,42 +502,6 @@ class ConverterApp:
         self.cancel_button = ttk.Button(action_row, text="Cancel", style="Danger.TButton", command=self.request_cancel, state="disabled")
         self.cancel_button.grid(row=0, column=1, sticky="ew")
 
-        progress_row = tk.Frame(action_row)
-        progress_row.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(10, 0))
-        progress_row.columnconfigure(0, weight=1)
-        self.register_background(progress_row, "background")
-
-        self.progress = ttk.Progressbar(
-            progress_row,
-            mode="determinate",
-            maximum=100,
-            variable=self.progress_value,
-            style="Accent.Horizontal.TProgressbar",
-        )
-        self.progress.grid(row=0, column=0, sticky="ew", padx=(0, 10))
-        ttk.Label(progress_row, textvariable=self.progress_text, style="Subtitle.TLabel").grid(row=0, column=1, sticky="e")
-
-    def build_status_area(self) -> None:
-        status_frame = tk.Frame(self.main, bd=0, highlightthickness=1)
-        status_frame.grid(row=6, column=0, sticky="nsew")
-        status_frame.columnconfigure(0, weight=1)
-        status_frame.rowconfigure(2, weight=1)
-        self.card_frames.append(status_frame)
-
-        status_row = tk.Frame(status_frame)
-        status_row.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 8))
-        status_row.columnconfigure(1, weight=1)
-        self.register_background(status_row, "panel")
-
-        ttk.Label(status_row, text="Status", style="Section.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Label(status_row, textvariable=self.status, style="Muted.TLabel").grid(row=0, column=1, sticky="e")
-
-        self.timeline = tk.Text(status_frame, height=6, wrap="word", bd=0, padx=12, pady=10, state="disabled")
-        self.timeline.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 10))
-
-        self.log = tk.Text(status_frame, height=7, wrap="word", bd=0, padx=12, pady=10)
-        self.log.grid(row=2, column=0, sticky="nsew", padx=18, pady=(0, 18))
-
     def toggle_theme(self) -> None:
         self.theme_name.set("dark" if self.theme_name.get() == "light" else "light")
         self.apply_theme()
@@ -607,16 +579,9 @@ class ConverterApp:
             darkcolor=theme.accent,
         )
 
-        for text_widget in (self.timeline, self.log):
-            text_widget.configure(
-                bg=theme.log_background,
-                fg=theme.log_text,
-                insertbackground=theme.log_text,
-                selectbackground=theme.selection,
-                selectforeground=theme.text,
-            )
         self.draw_logo()
         self.theme_button.configure(text="Light mode" if self.theme_name.get() == "dark" else "Dark mode")
+        self.refresh_status_popup_theme()
         self.render_timeline()
 
     def configure_button_styles(self) -> None:
@@ -689,23 +654,216 @@ class ConverterApp:
         canvas.create_rectangle(42, 20, 49, 34, fill="#14b8a6", outline="")
 
     def render_timeline(self, active_index: int | None = None, completed: int = 0, detail: str = "") -> None:
-        lines: list[str] = []
-        for index, title in enumerate(self.step_titles):
-            if active_index == index:
-                marker = "NOW "
-            elif index < completed:
-                marker = "DONE"
-            else:
-                marker = "WAIT"
-            lines.append(f"{marker}  Step {index + 1}: {title}")
-        if detail:
-            lines.append("")
-            lines.append(f"Now: {detail}")
+        self.active_step_index = active_index
+        self.completed_step_count = completed
+        self.current_step_detail = detail
+        self.draw_status_stages()
 
-        self.timeline.configure(state="normal")
-        self.timeline.delete("1.0", "end")
-        self.timeline.insert("end", "\n".join(lines))
-        self.timeline.configure(state="disabled")
+    def show_status_popup(self) -> None:
+        if self.status_popup and self.status_popup.winfo_exists():
+            self.status_popup.lift()
+            self.status_popup.focus_force()
+            self.start_status_animation()
+            return
+
+        theme = self.theme
+        popup = tk.Toplevel(self.root)
+        self.status_popup = popup
+        self.status_popup_panels = []
+        popup.title("Conversion Status")
+        popup.minsize(620, 440)
+        popup.transient(self.root)
+        popup.iconphoto(True, self.window_icon)
+        popup.configure(bg=theme.background)
+        popup.columnconfigure(0, weight=1)
+        popup.rowconfigure(0, weight=1)
+        popup.protocol("WM_DELETE_WINDOW", self.close_status_popup)
+
+        shell = tk.Frame(popup, bg=theme.background, padx=22, pady=20)
+        shell.grid(row=0, column=0, sticky="nsew")
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(2, weight=1)
+
+        header = tk.Frame(shell, bg=theme.background)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        header.columnconfigure(0, weight=1)
+        tk.Label(header, text="Conversion in progress", bg=theme.background, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
+            row=0,
+            column=0,
+            sticky="w",
+        )
+        tk.Label(header, textvariable=self.status, bg=theme.background, fg=theme.muted, font=("Segoe UI", 10), wraplength=540, justify="left").grid(
+            row=1,
+            column=0,
+            sticky="w",
+            pady=(4, 0),
+        )
+
+        stages_panel = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=14, pady=14)
+        stages_panel.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        stages_panel.columnconfigure(0, weight=1)
+        self.status_popup_panels.append(stages_panel)
+
+        self.status_stage_canvas = tk.Canvas(stages_panel, height=150, highlightthickness=0, bd=0, bg=theme.panel)
+        self.status_stage_canvas.grid(row=0, column=0, sticky="ew")
+        self.status_stage_canvas.bind("<Configure>", lambda event: self.draw_status_stages())
+
+        progress_row = tk.Frame(stages_panel, bg=theme.panel)
+        progress_row.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        progress_row.columnconfigure(0, weight=1)
+        ttk.Progressbar(
+            progress_row,
+            mode="determinate",
+            maximum=100,
+            variable=self.progress_value,
+            style="Accent.Horizontal.TProgressbar",
+        ).grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        ttk.Label(progress_row, textvariable=self.progress_text, style="Muted.TLabel").grid(row=0, column=1, sticky="e")
+
+        log_panel = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=14, pady=14)
+        log_panel.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
+        log_panel.columnconfigure(0, weight=1)
+        log_panel.rowconfigure(1, weight=1)
+        self.status_popup_panels.append(log_panel)
+        tk.Label(log_panel, text="Activity", bg=theme.panel, fg=theme.text, font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w")
+        self.status_log = tk.Text(log_panel, height=7, wrap="word", bd=0, padx=12, pady=10, state="disabled")
+        self.status_log.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+
+        button_row = tk.Frame(shell, bg=theme.background)
+        button_row.grid(row=3, column=0, sticky="ew")
+        button_row.columnconfigure(0, weight=1)
+        ttk.Button(button_row, text="Cancel Conversion", style="Danger.TButton", command=self.request_cancel).grid(row=0, column=1, sticky="e")
+
+        self.refresh_status_popup_theme()
+        self.refresh_status_log()
+        self.draw_status_stages()
+        self.start_status_animation()
+
+    def refresh_status_popup_theme(self) -> None:
+        if not self.status_popup or not self.status_popup.winfo_exists():
+            return
+
+        theme = self.theme
+        self.status_popup.configure(bg=theme.background)
+        popup_children = self.status_popup.winfo_children()
+        if popup_children and isinstance(popup_children[0], tk.Frame):
+            shell = popup_children[0]
+            shell.configure(bg=theme.background)
+            for child in shell.winfo_children():
+                if isinstance(child, tk.Frame) and child not in self.status_popup_panels:
+                    child.configure(bg=theme.background)
+            shell_children = shell.winfo_children()
+            if shell_children and isinstance(shell_children[0], tk.Frame):
+                header_labels = [child for child in shell_children[0].winfo_children() if isinstance(child, tk.Label)]
+                if header_labels:
+                    header_labels[0].configure(bg=theme.background, fg=theme.text)
+                if len(header_labels) > 1:
+                    header_labels[1].configure(bg=theme.background, fg=theme.muted)
+        for panel in self.status_popup_panels:
+            panel.configure(bg=theme.panel, highlightbackground=theme.border, highlightcolor=theme.border)
+            for child in panel.winfo_children():
+                if isinstance(child, tk.Frame):
+                    child.configure(bg=theme.panel)
+                elif isinstance(child, tk.Label):
+                    child.configure(bg=theme.panel, fg=theme.text)
+        if self.status_stage_canvas and self.status_stage_canvas.winfo_exists():
+            self.status_stage_canvas.configure(bg=theme.panel)
+        if self.status_log and self.status_log.winfo_exists():
+            self.status_log.configure(
+                bg=theme.log_background,
+                fg=theme.log_text,
+                insertbackground=theme.log_text,
+                selectbackground=theme.selection,
+                selectforeground=theme.text,
+            )
+        self.draw_status_stages()
+
+    def draw_status_stages(self) -> None:
+        canvas = self.status_stage_canvas
+        if not canvas or not canvas.winfo_exists():
+            return
+
+        theme = self.theme
+        canvas.delete("all")
+        width = max(canvas.winfo_width(), 540)
+        line_y = 48
+        start_x = 48
+        end_x = width - 48
+        step_count = len(self.step_titles)
+        spacing = (end_x - start_x) / max(step_count - 1, 1)
+
+        for index in range(step_count - 1):
+            x1 = start_x + index * spacing
+            x2 = start_x + (index + 1) * spacing
+            color = theme.accent if index < self.completed_step_count else theme.border
+            canvas.create_line(x1, line_y, x2, line_y, fill=color, width=4)
+
+        for index, title in enumerate(self.step_titles):
+            x = start_x + index * spacing
+            is_active = self.active_step_index == index
+            is_done = index < self.completed_step_count
+            fill = theme.accent if is_done or is_active else theme.panel_alt
+            outline = theme.accent_hover if is_active else theme.border
+            text_color = theme.accent_text if is_done or is_active else theme.muted
+            label_color = theme.text if is_done or is_active else theme.muted
+            radius = 16
+
+            if is_active:
+                pulse = 4 + (self.animation_frame % 8)
+                canvas.create_oval(x - radius - pulse, line_y - radius - pulse, x + radius + pulse, line_y + radius + pulse, outline=theme.accent, width=2)
+
+            canvas.create_oval(x - radius, line_y - radius, x + radius, line_y + radius, fill=fill, outline=outline, width=2)
+            canvas.create_text(x, line_y, text=str(index + 1), fill=text_color, font=("Segoe UI", 10, "bold"))
+            canvas.create_text(x, 86, text=title, width=96, fill=label_color, font=("Segoe UI", 8, "bold" if is_active else "normal"), justify="center", anchor="n")
+
+        if self.current_step_detail:
+            canvas.create_text(
+                width / 2,
+                132,
+                text=self.current_step_detail,
+                width=width - 72,
+                fill=theme.muted,
+                font=("Segoe UI", 9),
+                justify="center",
+            )
+
+    def start_status_animation(self) -> None:
+        if self.animation_job is None:
+            self.animation_job = self.root.after(120, self.animate_status_popup)
+
+    def animate_status_popup(self) -> None:
+        self.animation_job = None
+        if not self.status_popup or not self.status_popup.winfo_exists() or not self.is_converting:
+            return
+        self.animation_frame = (self.animation_frame + 1) % 32
+        self.draw_status_stages()
+        self.start_status_animation()
+
+    def stop_status_animation(self) -> None:
+        if self.animation_job is not None:
+            try:
+                self.root.after_cancel(self.animation_job)
+            except tk.TclError:
+                pass
+            self.animation_job = None
+
+    def close_status_popup(self) -> None:
+        self.stop_status_animation()
+        if self.status_popup and self.status_popup.winfo_exists():
+            self.status_popup.destroy()
+        self.status_popup = None
+        self.status_stage_canvas = None
+        self.status_log = None
+        self.status_popup_panels = []
+
+    def refresh_status_log(self) -> None:
+        if not self.status_log or not self.status_log.winfo_exists():
+            return
+        self.status_log.configure(state="normal")
+        self.status_log.delete("1.0", "end")
+        self.status_log.insert("end", "\n".join(self.status_log_lines))
+        self.status_log.configure(state="disabled")
+        self.status_log.see("end")
 
     def queue_step(self, active_index: int, detail: str, completed: int | None = None) -> None:
         completed_count = active_index if completed is None else completed
@@ -909,11 +1067,13 @@ class ConverterApp:
 
         self.cancel_event.clear()
         self.is_converting = True
+        self.status_log_lines.clear()
         self.convert_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
         self.set_progress(0, "Starting")
+        self.render_timeline(active_index=0, completed=0, detail="Starting conversion")
+        self.show_status_popup()
         self.write_log("Conversion started.")
-        self.show_toast("Conversion started", "Progress will update below while the file is being converted.")
 
         thread = threading.Thread(target=self.convert, daemon=True)
         thread.start()
@@ -1001,6 +1161,7 @@ class ConverterApp:
     def finish(self, message: str, success: bool, cancelled: bool = False, outputs: list[Path] | None = None) -> None:
         def update_ui() -> None:
             self.write_log(message)
+            self.stop_status_animation()
             if cancelled:
                 self.status.set("Cancelled")
                 self.render_timeline(detail="Conversion cancelled")
@@ -1015,8 +1176,8 @@ class ConverterApp:
             self.cancel_button.configure(state="disabled")
             self.is_converting = False
             if success:
-                messagebox.showinfo("Conversion complete", "Your conversion is complete. Opening the download page now.")
-                self.show_download_page(self.last_outputs)
+                self.write_log("Conversion complete. Opening download popup.")
+                self.root.after(700, lambda: (self.close_status_popup(), self.show_download_page(self.last_outputs)))
             else:
                 messagebox.showerror("Conversion stopped" if cancelled else "Conversion failed", message)
 
@@ -1029,9 +1190,10 @@ class ConverterApp:
 
         theme = self.theme
         page = tk.Toplevel(self.root)
-        page.title("Download Ready")
+        page.title("Conversion Complete")
         page.minsize(560, 360)
         page.transient(self.root)
+        page.iconphoto(True, self.window_icon)
         page.configure(bg=theme.background)
         page.columnconfigure(0, weight=1)
         page.rowconfigure(1, weight=1)
@@ -1039,7 +1201,7 @@ class ConverterApp:
         header = tk.Frame(page, bg=theme.background, padx=22, pady=18)
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        tk.Label(header, text="Download Ready", bg=theme.background, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
+        tk.Label(header, text="Conversion Complete", bg=theme.background, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
             row=0,
             column=0,
             sticky="w",
@@ -1104,7 +1266,9 @@ class ConverterApp:
             command=lambda: self.reset_after_download(page),
         ).grid(row=0, column=2, sticky="w")
 
-        self.show_toast("Download page opened", "Use Open File or Open Folder to access the converted output.")
+        page.attributes("-topmost", True)
+        page.after(500, lambda: page.attributes("-topmost", False))
+        self.show_toast("Download popup opened", "Use Open File or Open Folder to access the converted output.")
 
     def open_path(self, path: Path) -> None:
         try:
@@ -1128,8 +1292,10 @@ class ConverterApp:
         self.show_toast("Ready", "Choose the next file or folder to convert.")
 
     def write_log(self, message: str) -> None:
-        self.log.insert("end", f"{message}\n")
-        self.log.see("end")
+        self.status_log_lines.append(message)
+        if len(self.status_log_lines) > 80:
+            self.status_log_lines = self.status_log_lines[-80:]
+        self.refresh_status_log()
 
 
 def main() -> int:
