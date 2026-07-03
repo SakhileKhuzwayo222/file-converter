@@ -671,7 +671,7 @@ class ConverterApp:
         self.status_popup = popup
         self.status_popup_panels = []
         popup.title("Conversion Status")
-        popup.minsize(620, 440)
+        popup.minsize(680, 500)
         popup.transient(self.root)
         popup.iconphoto(True, self.window_icon)
         popup.configure(bg=theme.background)
@@ -679,25 +679,52 @@ class ConverterApp:
         popup.rowconfigure(0, weight=1)
         popup.protocol("WM_DELETE_WINDOW", self.close_status_popup)
 
-        shell = tk.Frame(popup, bg=theme.background, padx=22, pady=20)
+        shell = tk.Frame(popup, bg=theme.background, padx=26, pady=24)
         shell.grid(row=0, column=0, sticky="nsew")
         shell.columnconfigure(0, weight=1)
         shell.rowconfigure(2, weight=1)
 
-        header = tk.Frame(shell, bg=theme.background)
+        header = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=18, pady=16)
         header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
-        header.columnconfigure(0, weight=1)
-        tk.Label(header, text="Conversion in progress", bg=theme.background, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
+        header.columnconfigure(1, weight=1)
+        self.status_popup_panels.append(header)
+        tk.Label(
+            header,
+            text="FC",
+            bg=theme.accent,
+            fg=theme.accent_text,
+            font=("Segoe UI", 13, "bold"),
+            padx=12,
+            pady=8,
+        ).grid(row=0, column=0, rowspan=2, sticky="nsw", padx=(0, 14))
+        tk.Label(header, text="Live conversion", bg=theme.panel, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
             row=0,
-            column=0,
+            column=1,
             sticky="w",
         )
-        tk.Label(header, textvariable=self.status, bg=theme.background, fg=theme.muted, font=("Segoe UI", 10), wraplength=540, justify="left").grid(
+        tk.Label(
+            header,
+            textvariable=self.status,
+            bg=theme.panel,
+            fg=theme.muted,
+            font=("Segoe UI", 10),
+            wraplength=440,
+            justify="left",
+        ).grid(
             row=1,
-            column=0,
+            column=1,
             sticky="w",
             pady=(4, 0),
         )
+        tk.Label(
+            header,
+            text="WORKING",
+            bg=theme.panel_alt,
+            fg=theme.accent,
+            font=("Segoe UI", 8, "bold"),
+            padx=10,
+            pady=4,
+        ).grid(row=0, column=2, sticky="ne", padx=(14, 0))
 
         stages_panel = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=14, pady=14)
         stages_panel.grid(row=1, column=0, sticky="ew", pady=(0, 14))
@@ -738,6 +765,31 @@ class ConverterApp:
         self.refresh_status_log()
         self.draw_status_stages()
         self.start_status_animation()
+        self.center_popup(popup, 680, 500)
+
+    def center_popup(self, window: tk.Toplevel, width: int, height: int) -> None:
+        self.root.update_idletasks()
+        window.update_idletasks()
+
+        parent_width = max(self.root.winfo_width(), 1)
+        parent_height = max(self.root.winfo_height(), 1)
+        parent_x = self.root.winfo_rootx()
+        parent_y = self.root.winfo_rooty()
+
+        if parent_width <= 1 or parent_height <= 1:
+            screen_width = window.winfo_screenwidth()
+            screen_height = window.winfo_screenheight()
+            x = (screen_width - width) // 2
+            y = (screen_height - height) // 2
+        else:
+            x = parent_x + (parent_width - width) // 2
+            y = parent_y + (parent_height - height) // 2
+
+        screen_width = window.winfo_screenwidth()
+        screen_height = window.winfo_screenheight()
+        x = max(0, min(x, screen_width - width))
+        y = max(0, min(y, screen_height - height))
+        window.geometry(f"{width}x{height}+{x}+{y}")
 
     def refresh_status_popup_theme(self) -> None:
         if not self.status_popup or not self.status_popup.winfo_exists():
@@ -765,7 +817,14 @@ class ConverterApp:
                 if isinstance(child, tk.Frame):
                     child.configure(bg=theme.panel)
                 elif isinstance(child, tk.Label):
-                    child.configure(bg=theme.panel, fg=theme.text)
+                    if child.cget("text") == "FC":
+                        child.configure(bg=theme.accent, fg=theme.accent_text)
+                    elif child.cget("text") == "WORKING":
+                        child.configure(bg=theme.panel_alt, fg=theme.accent)
+                    elif child.cget("textvariable"):
+                        child.configure(bg=theme.panel, fg=theme.muted)
+                    else:
+                        child.configure(bg=theme.panel, fg=theme.text)
         if self.status_stage_canvas and self.status_stage_canvas.winfo_exists():
             self.status_stage_canvas.configure(bg=theme.panel)
         if self.status_log and self.status_log.winfo_exists():
@@ -1191,35 +1250,55 @@ class ConverterApp:
         theme = self.theme
         page = tk.Toplevel(self.root)
         page.title("Conversion Complete")
-        page.minsize(560, 360)
+        page.minsize(640, 430)
         page.transient(self.root)
         page.iconphoto(True, self.window_icon)
         page.configure(bg=theme.background)
         page.columnconfigure(0, weight=1)
-        page.rowconfigure(1, weight=1)
+        page.rowconfigure(0, weight=1)
 
-        header = tk.Frame(page, bg=theme.background, padx=22, pady=18)
-        header.grid(row=0, column=0, sticky="ew")
-        header.columnconfigure(0, weight=1)
-        tk.Label(header, text="Conversion Complete", bg=theme.background, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
+        shell = tk.Frame(page, bg=theme.background, padx=26, pady=24)
+        shell.grid(row=0, column=0, sticky="nsew")
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(1, weight=1)
+
+        header = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=18, pady=16)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        header.columnconfigure(1, weight=1)
+        tk.Label(
+            header,
+            text="DONE",
+            bg=theme.accent,
+            fg=theme.accent_text,
+            font=("Segoe UI", 11, "bold"),
+            padx=12,
+            pady=10,
+        ).grid(row=0, column=0, rowspan=2, sticky="nsw", padx=(0, 14))
+        tk.Label(header, text="Conversion Complete", bg=theme.panel, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
             row=0,
-            column=0,
+            column=1,
             sticky="w",
         )
         tk.Label(
             header,
             text="Your converted file is ready. Open it now or open the folder where it was saved.",
-            bg=theme.background,
+            bg=theme.panel,
             fg=theme.muted,
             font=("Segoe UI", 10),
-            wraplength=500,
+            wraplength=470,
             justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ).grid(row=1, column=1, sticky="w", pady=(4, 0))
 
-        content = tk.Frame(page, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=16, pady=14)
-        content.grid(row=1, column=0, sticky="nsew", padx=22, pady=(0, 16))
+        content = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=16, pady=14)
+        content.grid(row=1, column=0, sticky="nsew", pady=(0, 14))
         content.columnconfigure(0, weight=1)
-        content.rowconfigure(0, weight=1)
+        content.rowconfigure(1, weight=1)
+        tk.Label(content, text="Converted output", bg=theme.panel, fg=theme.text, font=("Segoe UI", 10, "bold")).grid(
+            row=0,
+            column=0,
+            sticky="w",
+            pady=(0, 8),
+        )
 
         listbox = tk.Listbox(
             content,
@@ -1232,12 +1311,12 @@ class ConverterApp:
             highlightthickness=0,
             font=("Segoe UI", 10),
         )
-        listbox.grid(row=0, column=0, sticky="nsew")
+        listbox.grid(row=1, column=0, sticky="nsew")
         for output in outputs:
             listbox.insert("end", str(output))
         listbox.selection_set(0)
 
-        button_row = tk.Frame(page, bg=theme.background, padx=22, pady=(0, 22))
+        button_row = tk.Frame(shell, bg=theme.background)
         button_row.grid(row=2, column=0, sticky="ew")
         button_row.columnconfigure(3, weight=1)
 
@@ -1267,6 +1346,7 @@ class ConverterApp:
         ).grid(row=0, column=2, sticky="w")
 
         page.attributes("-topmost", True)
+        self.center_popup(page, 640, 430)
         page.after(500, lambda: page.attributes("-topmost", False))
         self.show_toast("Download popup opened", "Use Open File or Open Folder to access the converted output.")
 
