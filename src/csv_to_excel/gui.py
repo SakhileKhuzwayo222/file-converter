@@ -528,6 +528,9 @@ class ConverterApp:
         self.card_frames: list[tk.Frame] = []
         self.window_icon = self.create_window_icon()
         self.root.iconphoto(True, self.window_icon)
+        self.ui_icons = self.create_ui_icons()
+        self.icon_buttons: list[tuple[ttk.Button, str]] = []
+        self.icon_labels: list[tuple[tk.Label, str]] = []
 
         self.build_layout()
         self.apply_theme()
@@ -568,8 +571,158 @@ class ConverterApp:
         icon.put("#14b8a6", to=(45, 24, 52, 40))
         return icon
 
+    def create_ui_icons(self) -> dict[str, tk.PhotoImage]:
+        theme = self.theme
+        ink = theme.text
+
+        def new_icon() -> tk.PhotoImage:
+            return tk.PhotoImage(width=18, height=18)
+
+        def rect(icon: tk.PhotoImage, color: str, x1: int, y1: int, x2: int, y2: int) -> None:
+            icon.put(color, to=(x1, y1, x2, y2))
+
+        icons: dict[str, tk.PhotoImage] = {}
+
+        upload = new_icon()
+        rect(upload, ink, 8, 3, 10, 13)
+        rect(upload, ink, 5, 6, 13, 8)
+        rect(upload, ink, 2, 13, 16, 16)
+        rect(upload, ink, 3, 11, 5, 13)
+        rect(upload, ink, 13, 11, 15, 13)
+        icons["upload"] = upload
+
+        folder = new_icon()
+        rect(folder, ink, 2, 5, 8, 8)
+        rect(folder, ink, 2, 7, 16, 15)
+        rect(folder, theme.selection, 3, 9, 15, 14)
+        icons["folder"] = folder
+
+        edit = new_icon()
+        rect(edit, ink, 4, 13, 7, 16)
+        rect(edit, ink, 6, 11, 9, 14)
+        rect(edit, ink, 8, 9, 11, 12)
+        rect(edit, ink, 10, 7, 13, 10)
+        rect(edit, ink, 12, 5, 15, 8)
+        rect(edit, theme.muted, 13, 4, 16, 7)
+        icons["edit"] = edit
+
+        convert = new_icon()
+        rect(convert, ink, 2, 8, 13, 10)
+        rect(convert, ink, 11, 5, 13, 13)
+        rect(convert, ink, 13, 7, 16, 11)
+        icons["convert"] = convert
+
+        cancel = new_icon()
+        for offset in range(5):
+            rect(cancel, ink, 4 + offset, 4 + offset, 6 + offset, 6 + offset)
+            rect(cancel, ink, 12 - offset, 4 + offset, 14 - offset, 6 + offset)
+        icons["cancel"] = cancel
+
+        close = new_icon()
+        for offset in range(5):
+            rect(close, theme.muted, 4 + offset, 4 + offset, 6 + offset, 6 + offset)
+            rect(close, theme.muted, 12 - offset, 4 + offset, 14 - offset, 6 + offset)
+        icons["close"] = close
+
+        check = new_icon()
+        rect(check, ink, 3, 9, 5, 11)
+        rect(check, ink, 5, 11, 7, 13)
+        rect(check, ink, 7, 10, 9, 12)
+        rect(check, ink, 9, 8, 11, 10)
+        rect(check, ink, 11, 6, 15, 8)
+        icons["check"] = check
+
+        save = new_icon()
+        rect(save, ink, 3, 3, 15, 16)
+        rect(save, theme.background, 5, 5, 12, 8)
+        rect(save, theme.selection, 6, 11, 13, 15)
+        rect(save, theme.accent_text, 11, 5, 13, 8)
+        icons["save"] = save
+
+        theme_icon = new_icon()
+        rect(theme_icon, ink, 7, 2, 11, 4)
+        rect(theme_icon, ink, 7, 14, 11, 16)
+        rect(theme_icon, ink, 2, 7, 4, 11)
+        rect(theme_icon, ink, 14, 7, 16, 11)
+        rect(theme_icon, ink, 6, 6, 12, 12)
+        rect(theme_icon, theme.background, 9, 5, 13, 13)
+        icons["theme"] = theme_icon
+
+        file_icon = new_icon()
+        rect(file_icon, ink, 4, 2, 12, 16)
+        rect(file_icon, ink, 12, 5, 15, 16)
+        rect(file_icon, theme.background, 6, 6, 12, 8)
+        rect(file_icon, theme.background, 6, 10, 13, 12)
+        icons["file"] = file_icon
+
+        open_icon = new_icon()
+        rect(open_icon, ink, 4, 3, 13, 16)
+        rect(open_icon, theme.background, 6, 6, 12, 8)
+        rect(open_icon, theme.background, 6, 10, 12, 12)
+        rect(open_icon, ink, 10, 4, 16, 6)
+        rect(open_icon, ink, 14, 4, 16, 10)
+        rect(open_icon, ink, 11, 7, 15, 11)
+        icons["open"] = open_icon
+
+        download = new_icon()
+        rect(download, ink, 8, 3, 10, 12)
+        rect(download, ink, 5, 9, 13, 11)
+        rect(download, ink, 6, 11, 12, 13)
+        rect(download, ink, 3, 14, 15, 16)
+        icons["download"] = download
+
+        return icons
+
     def register_background(self, widget: tk.Widget, role: str) -> None:
         self.tk_backgrounds.append((widget, role))
+
+    def icon_button(
+        self,
+        parent: tk.Widget,
+        text: str,
+        icon_name: str,
+        style: str,
+        command: Callable[[], object],
+        **options: object,
+    ) -> ttk.Button:
+        button = ttk.Button(
+            parent,
+            text=text,
+            image=self.ui_icons.get(icon_name),
+            compound="left",
+            style=style,
+            command=command,
+            **options,
+        )
+        self.icon_buttons.append((button, icon_name))
+        return button
+
+    def icon_label(self, parent: tk.Widget, icon_name: str, role: str = "panel") -> tk.Label:
+        label = tk.Label(parent, image=self.ui_icons.get(icon_name), bd=0)
+        self.icon_labels.append((label, icon_name))
+        self.register_background(label, role)
+        return label
+
+    def refresh_icon_widgets(self) -> None:
+        active_buttons: list[tuple[ttk.Button, str]] = []
+        for button, icon_name in self.icon_buttons:
+            try:
+                if button.winfo_exists():
+                    button.configure(image=self.ui_icons.get(icon_name), compound="left")
+                    active_buttons.append((button, icon_name))
+            except tk.TclError:
+                continue
+        self.icon_buttons = active_buttons
+
+        active_labels: list[tuple[tk.Label, str]] = []
+        for label, icon_name in self.icon_labels:
+            try:
+                if label.winfo_exists():
+                    label.configure(image=self.ui_icons.get(icon_name))
+                    active_labels.append((label, icon_name))
+            except tk.TclError:
+                continue
+        self.icon_labels = active_labels
 
     def build_layout(self) -> None:
         self.root.columnconfigure(0, weight=1)
@@ -657,16 +810,22 @@ class ConverterApp:
             column=1,
             sticky="nw",
         )
-        self.theme_button = ttk.Button(header, text="Dark mode", style="Ghost.TButton", command=self.toggle_theme)
+        self.theme_button = self.icon_button(header, "Dark mode", "theme", "Ghost.TButton", self.toggle_theme)
         self.theme_button.grid(row=0, column=2, rowspan=2, sticky="e")
 
-    def make_card(self, row: int, title: str) -> tk.Frame:
+    def make_card(self, row: int, title: str, icon_name: str = "file") -> tk.Frame:
         card = tk.Frame(self.main, bd=0, highlightthickness=1)
         card.grid(row=row, column=0, sticky="ew", pady=(0, 16))
         card.columnconfigure(0, weight=1)
         self.card_frames.append(card)
 
-        ttk.Label(card, text=title, style="Section.TLabel").grid(row=0, column=0, sticky="w", padx=22, pady=(18, 10))
+        title_row = tk.Frame(card)
+        title_row.grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 10))
+        title_row.columnconfigure(1, weight=1)
+        self.register_background(title_row, "panel")
+        self.icon_label(title_row, icon_name).grid(row=0, column=0, sticky="w", padx=(0, 10))
+        ttk.Label(title_row, text=title, style="Section.TLabel").grid(row=0, column=1, sticky="w")
+
         body = tk.Frame(card)
         body.grid(row=1, column=0, sticky="ew", padx=22, pady=(0, 20))
         body.columnconfigure(1, weight=1)
@@ -674,7 +833,7 @@ class ConverterApp:
         return body
 
     def build_conversion_card(self) -> None:
-        body = self.make_card(1, "Select file type")
+        body = self.make_card(1, "Select file type", "convert")
         body.columnconfigure(0, weight=1)
 
         selector_row = tk.Frame(body)
@@ -755,11 +914,12 @@ class ConverterApp:
         self.upload_hint = ttk.Label(self.upload_summary_box, text="Open the upload popup to choose a source file.", style="UploadHint.TLabel")
         self.upload_hint.grid(row=1, column=1, sticky="nw", pady=(4, 0))
 
-        self.upload_popup_button = ttk.Button(
+        self.upload_popup_button = self.icon_button(
             self.upload_summary_box,
-            text="Open Upload",
-            style="Secondary.TButton",
-            command=self.show_upload_popup,
+            "Open Upload",
+            "upload",
+            "Secondary.TButton",
+            self.show_upload_popup,
         )
         self.upload_popup_button.grid(row=0, column=2, rowspan=2, sticky="e", padx=(16, 0))
 
@@ -767,12 +927,12 @@ class ConverterApp:
             widget.bind("<Button-1>", lambda event: self.show_upload_popup())
 
     def build_output_card(self) -> None:
-        body = self.make_card(2, "Output")
+        body = self.make_card(2, "Output", "folder")
 
         ttk.Label(body, text="Save folder", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
         self.output_entry = ttk.Entry(body, textvariable=self.output_folder)
         self.output_entry.grid(row=0, column=1, sticky="ew", pady=(0, 10))
-        self.output_button = ttk.Button(body, text="Browse", style="Secondary.TButton", command=self.choose_output_folder)
+        self.output_button = self.icon_button(body, "Browse", "folder", "Secondary.TButton", self.choose_output_folder)
         self.output_button.grid(row=0, column=2, sticky="ew", padx=(10, 0), pady=(0, 10))
 
         ttk.Label(body, text="Rename output file?", style="Card.TLabel").grid(row=1, column=0, sticky="w", padx=(0, 12))
@@ -806,17 +966,17 @@ class ConverterApp:
         self.suggested_label.grid(row=3, column=1, columnspan=2, sticky="w", pady=(8, 0))
 
     def build_editor_card(self) -> None:
-        body = self.make_card(3, "File Editor")
+        body = self.make_card(3, "File Editor", "edit")
         body.columnconfigure(0, weight=1)
 
         ttk.Label(body, textvariable=self.editor_status, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Button(body, text="Choose File", style="Secondary.TButton", command=self.choose_editor_file).grid(
+        self.icon_button(body, "Choose File", "folder", "Secondary.TButton", self.choose_editor_file).grid(
             row=0,
             column=1,
             sticky="e",
             padx=(14, 0),
         )
-        ttk.Button(body, text="Open Editor", style="Accent.TButton", command=self.show_editor_popup).grid(
+        self.icon_button(body, "Open Editor", "edit", "Accent.TButton", self.show_editor_popup).grid(
             row=0,
             column=2,
             sticky="e",
@@ -829,9 +989,9 @@ class ConverterApp:
         action_row.columnconfigure(0, weight=1)
         self.card_frames.append(action_row)
 
-        self.convert_button = ttk.Button(action_row, text="Convert", style="Accent.TButton", command=self.start_conversion)
+        self.convert_button = self.icon_button(action_row, "Convert", "convert", "Accent.TButton", self.start_conversion)
         self.convert_button.grid(row=0, column=0, sticky="ew", padx=(0, 10))
-        self.cancel_button = ttk.Button(action_row, text="Cancel", style="Danger.TButton", command=self.request_cancel, state="disabled")
+        self.cancel_button = self.icon_button(action_row, "Cancel", "cancel", "Danger.TButton", self.request_cancel, state="disabled")
         self.cancel_button.grid(row=0, column=1, sticky="ew")
 
     def toggle_theme(self) -> None:
@@ -840,6 +1000,8 @@ class ConverterApp:
 
     def apply_theme(self) -> None:
         theme = self.theme
+        old_icons = self.ui_icons
+        self.ui_icons = self.create_ui_icons()
         try:
             self.style.theme_use("clam")
         except tk.TclError:
@@ -900,6 +1062,7 @@ class ConverterApp:
         )
 
         self.configure_button_styles()
+        self.refresh_icon_widgets()
         self.style.configure("Card.TRadiobutton", background=theme.panel, foreground=theme.text)
         self.style.map("Card.TRadiobutton", background=[("active", theme.panel)], foreground=[("active", theme.text)])
         self.style.configure("Card.TCheckbutton", background=theme.panel, foreground=theme.text)
@@ -1162,13 +1325,13 @@ class ConverterApp:
         button_row = tk.Frame(shell, bg=theme.background)
         button_row.grid(row=2, column=0, sticky="ew")
         button_row.columnconfigure(0, weight=1)
-        ttk.Button(button_row, text="Close", style="Ghost.TButton", command=self.close_editor_popup).grid(
+        self.icon_button(button_row, "Close", "close", "Ghost.TButton", self.close_editor_popup).grid(
             row=0,
             column=1,
             sticky="e",
             padx=(0, 10),
         )
-        ttk.Button(button_row, text="Save Changes", style="Accent.TButton", command=self.save_editor_file).grid(
+        self.icon_button(button_row, "Save Changes", "save", "Accent.TButton", self.save_editor_file).grid(
             row=0,
             column=2,
             sticky="e",
@@ -1304,13 +1467,13 @@ class ConverterApp:
         button_row = tk.Frame(shell, bg=theme.background)
         button_row.grid(row=2, column=0, sticky="ew")
         button_row.columnconfigure(0, weight=1)
-        ttk.Button(button_row, text="Cancel", style="Ghost.TButton", command=self.close_upload_popup).grid(
+        self.icon_button(button_row, "Cancel", "close", "Ghost.TButton", self.close_upload_popup).grid(
             row=0,
             column=1,
             sticky="e",
             padx=(0, 10),
         )
-        ttk.Button(button_row, text="Submit Upload", style="Accent.TButton", command=self.submit_input_from_popup).grid(
+        self.icon_button(button_row, "Submit Upload", "check", "Accent.TButton", self.submit_input_from_popup).grid(
             row=0,
             column=2,
             sticky="e",
@@ -1474,7 +1637,11 @@ class ConverterApp:
         button_row = tk.Frame(shell, bg=theme.background)
         button_row.grid(row=3, column=0, sticky="ew")
         button_row.columnconfigure(0, weight=1)
-        ttk.Button(button_row, text="Cancel Conversion", style="Danger.TButton", command=self.request_cancel).grid(row=0, column=1, sticky="e")
+        self.icon_button(button_row, "Cancel Conversion", "cancel", "Danger.TButton", self.request_cancel).grid(
+            row=0,
+            column=1,
+            sticky="e",
+        )
 
         self.refresh_status_popup_theme()
         self.refresh_status_log()
@@ -1725,16 +1892,26 @@ class ConverterApp:
             self.to_format.set(targets[0] if targets else "")
         self.update_labels(clear_paths=clear_paths)
 
+    def input_type_hint(self) -> str:
+        if self.spec.input_extensions == TEXT_DOCUMENT_EXTENSIONS:
+            return TEXT_EDIT_SUMMARY
+        return ", ".join(self.spec.input_extensions)
+
+    def input_file_phrase(self) -> str:
+        label = self.spec.input_label
+        article = "an" if label[:1].lower() in "aeiou" else "a"
+        return f"{article} {label}"
+
     def update_labels(self, clear_paths: bool = True) -> None:
         spec = self.spec
         if self.mode.get() == "folder":
             self.upload_title.configure(text=f"Add {spec.input_label} folder")
-            self.upload_hint.configure(text=f"Open the upload popup to choose a folder containing {', '.join(spec.input_extensions)} files.")
+            self.upload_hint.configure(text=f"Open the upload popup to choose a folder containing {self.input_type_hint()} files.")
             self.rename_output.set(False)
             self.status.set("Ready for folder upload")
         else:
             self.upload_title.configure(text=f"Add {spec.input_label} file")
-            self.upload_hint.configure(text=f"Open the upload popup to choose a {spec.input_label} file.")
+            self.upload_hint.configure(text=f"Open the upload popup to choose {self.input_file_phrase()} file.")
             self.status.set("Ready")
 
         encoding_state = "normal" if spec.supports_encoding else "disabled"
@@ -1758,9 +1935,9 @@ class ConverterApp:
             state = "submitted" if self.input_submitted else "selected"
             self.upload_hint.configure(text=f"{state.title()}: {self.display_path(Path(path))}")
         elif self.mode.get() == "folder":
-            self.upload_hint.configure(text=f"Open the upload popup to choose a folder containing {', '.join(self.spec.input_extensions)} files.")
+            self.upload_hint.configure(text=f"Open the upload popup to choose a folder containing {self.input_type_hint()} files.")
         else:
-            self.upload_hint.configure(text=f"Open the upload popup to choose a {self.spec.input_label} file.")
+            self.upload_hint.configure(text=f"Open the upload popup to choose {self.input_file_phrase()} file.")
         self.refresh_upload_popup_text()
         self.update_suggested_name()
         self.update_editor_status()
@@ -1793,7 +1970,8 @@ class ConverterApp:
 
     def filetypes(self) -> list[tuple[str, str]]:
         patterns = " ".join(f"*{extension}" for extension in self.spec.input_extensions)
-        return [(f"{self.spec.input_label.title()} files", patterns), ("All files", "*.*")]
+        label = "Editable files" if self.spec.input_extensions == TEXT_DOCUMENT_EXTENSIONS else f"{self.spec.input_label.title()} files"
+        return [(label, patterns), ("All files", "*.*")]
 
     def choose_input(self) -> None:
         if self.is_converting:
@@ -2085,23 +2263,25 @@ class ConverterApp:
                 return outputs[selection[0]]
             return outputs[0]
 
-        ttk.Button(button_row, text="Open File", style="Accent.TButton", command=lambda: self.open_path(selected_output())).grid(
+        self.icon_button(button_row, "Open File", "open", "Accent.TButton", lambda: self.open_path(selected_output())).grid(
             row=0,
             column=0,
             sticky="w",
             padx=(0, 10),
         )
-        ttk.Button(
+        self.icon_button(
             button_row,
-            text="Open Folder",
-            style="Secondary.TButton",
-            command=lambda: self.open_path(selected_output().parent),
+            "Open Folder",
+            "folder",
+            "Secondary.TButton",
+            lambda: self.open_path(selected_output().parent),
         ).grid(row=0, column=1, sticky="w", padx=(0, 10))
-        ttk.Button(
+        self.icon_button(
             button_row,
-            text="New Conversion",
-            style="Ghost.TButton",
-            command=lambda: self.reset_after_download(page),
+            "New Conversion",
+            "convert",
+            "Ghost.TButton",
+            lambda: self.reset_after_download(page),
         ).grid(row=0, column=2, sticky="w")
 
         page.attributes("-topmost", True)

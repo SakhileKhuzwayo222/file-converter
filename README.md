@@ -2,7 +2,7 @@
 
 A small Windows-friendly Python project for converting files into Microsoft Office formats.
 
-The app includes a custom File Converter icon, a modern interface, and a Light/Dark theme toggle.
+The app includes a custom File Converter icon, icon-led controls, a modern interface, and a Light/Dark theme toggle.
 It also shows interaction popups, a step-by-step conversion timeline, a determinate progress bar, and a download-ready screen when conversion finishes.
 It includes a simple editor for text, data, web, code, script, and config files before conversion.
 
