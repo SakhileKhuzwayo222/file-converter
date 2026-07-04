@@ -542,6 +542,7 @@ class ConverterApp:
         self.progress_value = tk.DoubleVar(value=0)
         self.progress_text = tk.StringVar(value="0%")
         self.editor_status = tk.StringVar(value="Choose an editable source file")
+        self.upload_status_text = tk.StringVar(value="No file selected yet")
 
         self.input_submitted = False
         self.cancel_event = threading.Event()
@@ -1307,7 +1308,7 @@ class ConverterApp:
         return body
 
     def build_conversion_card(self) -> None:
-        body = self.make_card(2, "Select file type", "convert")
+        body = self.make_card(2, "Convert files", "convert")
         body.columnconfigure(0, weight=1)
 
         selector_row = tk.Frame(body)
@@ -1349,7 +1350,7 @@ class ConverterApp:
         self.register_background(mode_row, "panel")
         ttk.Radiobutton(
             mode_row,
-            text="Single file",
+            text="Files",
             value="file",
             variable=self.mode,
             style="Card.TRadiobutton",
@@ -1357,7 +1358,7 @@ class ConverterApp:
         ).grid(row=0, column=0, padx=(0, 18), sticky="w")
         ttk.Radiobutton(
             mode_row,
-            text="Folder of files",
+            text="Folder",
             value="folder",
             variable=self.mode,
             style="Card.TRadiobutton",
@@ -1401,7 +1402,7 @@ class ConverterApp:
             widget.bind("<Button-1>", lambda event: self.show_upload_popup())
 
     def build_output_card(self) -> None:
-        body = self.make_card(3, "Output", "folder")
+        body = self.make_card(3, "Output settings", "folder")
 
         ttk.Label(body, text="Save folder", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
         self.output_entry = ttk.Entry(body, textvariable=self.output_folder)
@@ -2056,7 +2057,7 @@ function assertAllowedExtension(filename, allowedExtensions) {
         self.upload_popup = popup
         self.upload_popup_panels = []
         popup.title("Upload Source")
-        popup.minsize(560, 360)
+        popup.minsize(640, 500)
         popup.transient(self.root)
         popup.iconphoto(True, self.window_icon)
         popup.configure(bg=theme.background)
@@ -2103,20 +2104,51 @@ function assertAllowedExtension(filename, allowedExtensions) {
         body.columnconfigure(0, weight=1)
         self.upload_popup_panels.append(body)
 
-        self.upload_popup_box = tk.Frame(body, bd=0, highlightthickness=1, padx=20, pady=22, cursor="hand2")
+        self.upload_popup_box = tk.Frame(body, bd=0, highlightthickness=1, padx=20, pady=34, cursor="hand2")
         self.upload_popup_box.grid(row=0, column=0, sticky="ew")
-        self.upload_popup_box.columnconfigure(1, weight=1)
+        self.upload_popup_box.columnconfigure(0, weight=1)
 
         self.upload_popup_plus = tk.Label(self.upload_popup_box, text="+", font=("Segoe UI", 42, "bold"), cursor="hand2")
-        self.upload_popup_plus.grid(row=0, column=0, rowspan=2, padx=(0, 18))
+        self.upload_popup_plus.grid(row=0, column=0, sticky="n")
 
-        self.upload_popup_title = ttk.Label(self.upload_popup_box, text=self.upload_title.cget("text"), style="UploadTitle.TLabel")
-        self.upload_popup_title.grid(row=0, column=1, sticky="sw")
-        self.upload_popup_hint = ttk.Label(self.upload_popup_box, text=self.upload_hint.cget("text"), style="UploadHint.TLabel")
-        self.upload_popup_hint.grid(row=1, column=1, sticky="nw", pady=(4, 0))
+        self.upload_popup_title = ttk.Label(self.upload_popup_box, text="Drag & drop files or folders here", style="UploadTitle.TLabel")
+        self.upload_popup_title.grid(row=1, column=0, sticky="n", pady=(10, 0))
+        self.upload_popup_hint = ttk.Label(self.upload_popup_box, text="or click to browse", style="UploadHint.TLabel")
+        self.upload_popup_hint.grid(row=2, column=0, sticky="n", pady=(4, 0))
 
         for widget in (self.upload_popup_box, self.upload_popup_plus, self.upload_popup_title, self.upload_popup_hint):
             widget.bind("<Button-1>", lambda event: self.choose_input())
+
+        status_card = tk.Frame(body, bd=0, highlightthickness=1, padx=14, pady=12)
+        status_card.grid(row=1, column=0, sticky="ew", pady=(14, 0))
+        status_card.columnconfigure(1, weight=1)
+        self.upload_popup_panels.append(status_card)
+        self.icon_label(status_card, "check").grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+        ttk.Label(status_card, text="Ready to upload", style="Card.TLabel").grid(row=0, column=1, sticky="w")
+        ttk.Label(status_card, textvariable=self.upload_status_text, style="Muted.TLabel").grid(row=1, column=1, sticky="w", pady=(3, 0))
+
+        choose_row = tk.Frame(body)
+        choose_row.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+        choose_row.columnconfigure(0, weight=1)
+        choose_row.columnconfigure(1, weight=1)
+        self.register_background(choose_row, "panel")
+        self.icon_button(choose_row, "Choose file", "file", "Secondary.TButton", self.choose_file_input).grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=(0, 8),
+        )
+        self.icon_button(choose_row, "Choose folder", "folder", "Secondary.TButton", self.choose_folder_input).grid(
+            row=0,
+            column=1,
+            sticky="ew",
+            padx=(8, 0),
+        )
+        ttk.Label(
+            body,
+            text="Accepted source types: all supported document, data, archive, audio, and video files.",
+            style="Muted.TLabel",
+        ).grid(row=3, column=0, sticky="w", pady=(12, 0))
 
         button_row = tk.Frame(shell, bg=theme.background)
         button_row.grid(row=2, column=0, sticky="ew")
@@ -2135,7 +2167,7 @@ function assertAllowedExtension(filename, allowedExtensions) {
 
         self.refresh_upload_popup_theme()
         self.refresh_upload_popup_text()
-        self.center_popup(popup, 560, 360)
+        self.center_popup(popup, 640, 500)
         popup.focus_force()
 
     def close_upload_popup(self) -> None:
@@ -2156,9 +2188,9 @@ function assertAllowedExtension(filename, allowedExtensions) {
         if not self.upload_popup or not self.upload_popup.winfo_exists():
             return
         if self.upload_popup_title and self.upload_popup_title.winfo_exists():
-            self.upload_popup_title.configure(text=self.upload_title.cget("text"))
+            self.upload_popup_title.configure(text="Drag & drop files or folders here")
         if self.upload_popup_hint and self.upload_popup_hint.winfo_exists():
-            self.upload_popup_hint.configure(text=self.upload_hint.cget("text"))
+            self.upload_popup_hint.configure(text="or click to browse")
 
     def refresh_upload_popup_theme(self) -> None:
         if not self.upload_popup or not self.upload_popup.winfo_exists():
@@ -2602,12 +2634,16 @@ function assertAllowedExtension(filename, allowedExtensions) {
         if path:
             state = "submitted" if self.input_submitted else "selected"
             self.upload_hint.configure(text=f"{state.title()}: {self.display_path(Path(path))}")
+            self.upload_status_text.set(self.display_path(Path(path), max_length=78))
         elif self.uses_folder_source():
             self.upload_hint.configure(text="Open the upload popup to choose a folder to compress into a ZIP archive.")
+            self.upload_status_text.set("No file selected yet")
         elif self.mode.get() == "folder":
             self.upload_hint.configure(text=f"Open the upload popup to choose a folder containing {self.input_type_hint()} files.")
+            self.upload_status_text.set("No file selected yet")
         else:
             self.upload_hint.configure(text=f"Open the upload popup to choose {self.input_file_phrase()} file.")
+            self.upload_status_text.set("No file selected yet")
         self.refresh_upload_popup_text()
         self.update_suggested_name()
         self.update_editor_status()
@@ -2646,6 +2682,39 @@ function assertAllowedExtension(filename, allowedExtensions) {
         label = "Editable files" if self.spec.input_extensions == TEXT_DOCUMENT_EXTENSIONS else f"{self.spec.input_label.title()} files"
         return [(label, patterns), ("All files", "*.*")]
 
+    def set_selected_input(self, path: str) -> None:
+        self.input_path.set(path)
+        self.input_submitted = False
+        self.status.set("Upload selected. Press Submit.")
+        self.set_progress(5, "Upload selected")
+        self.render_timeline()
+        self.update_upload_display()
+
+    def choose_file_input(self) -> None:
+        if self.is_converting:
+            return
+        if self.uses_folder_source():
+            self.show_error("Folder required", "This conversion creates a ZIP archive, so choose a folder instead.")
+            return
+        self.mode.set("file")
+        self.update_labels(clear_paths=False)
+        path = filedialog.askopenfilename(
+            title=f"Choose {self.spec.input_label} file",
+            filetypes=self.filetypes(),
+        )
+        if path:
+            self.set_selected_input(path)
+
+    def choose_folder_input(self) -> None:
+        if self.is_converting:
+            return
+        self.mode.set("folder")
+        self.update_labels(clear_paths=False)
+        title = "Choose folder to zip" if self.uses_folder_source() else f"Choose folder containing {self.spec.input_label} files"
+        path = filedialog.askdirectory(title=title)
+        if path:
+            self.set_selected_input(path)
+
     def choose_input(self) -> None:
         if self.is_converting:
             return
@@ -2658,12 +2727,7 @@ function assertAllowedExtension(filename, allowedExtensions) {
                 filetypes=self.filetypes(),
             )
         if path:
-            self.input_path.set(path)
-            self.input_submitted = False
-            self.status.set("Upload selected. Press Submit.")
-            self.set_progress(5, "Upload selected")
-            self.render_timeline()
-            self.update_upload_display()
+            self.set_selected_input(path)
 
     def submit_input(self) -> bool:
         path_text = self.input_path.get().strip()
@@ -2873,80 +2937,105 @@ function assertAllowedExtension(filename, allowedExtensions) {
         theme = self.theme
         page = tk.Toplevel(self.root)
         page.title("Conversion Complete")
-        page.minsize(640, 430)
+        page.minsize(760, 540)
         page.transient(self.root)
         page.iconphoto(True, self.window_icon)
         page.configure(bg=theme.background)
         page.columnconfigure(0, weight=1)
         page.rowconfigure(0, weight=1)
 
-        shell = tk.Frame(page, bg=theme.background, padx=26, pady=24)
+        shell = tk.Frame(page, bg=theme.background, padx=30, pady=28)
         shell.grid(row=0, column=0, sticky="nsew")
         shell.columnconfigure(0, weight=1)
-        shell.rowconfigure(1, weight=1)
+        shell.rowconfigure(2, weight=1)
 
-        header = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=18, pady=16)
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
-        header.columnconfigure(1, weight=1)
+        close_button = tk.Button(shell, text="x", bd=0, bg=theme.background, fg=theme.muted, font=("Segoe UI", 16), command=page.destroy)
+        close_button.grid(row=0, column=0, sticky="ne")
+        header = tk.Frame(shell, bg=theme.background)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 18))
+        header.columnconfigure(0, weight=1)
         tk.Label(
             header,
-            text="DONE",
+            text="✓",
             bg=theme.accent,
             fg=theme.accent_text,
-            font=("Segoe UI", 11, "bold"),
-            padx=12,
-            pady=10,
-        ).grid(row=0, column=0, rowspan=2, sticky="nsw", padx=(0, 14))
-        tk.Label(header, text="Conversion Complete", bg=theme.panel, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
-            row=0,
-            column=1,
-            sticky="w",
+            font=("Segoe UI", 26, "bold"),
+            width=3,
+            height=1,
+        ).grid(row=0, column=0, sticky="n")
+        tk.Label(header, text="Conversion complete", bg=theme.background, fg=theme.text, font=("Segoe UI", 22, "bold")).grid(
+            row=1,
+            column=0,
+            sticky="n",
+            pady=(14, 0),
         )
         tk.Label(
             header,
-            text="Your converted file is ready. Open it now or open the folder where it was saved.",
-            bg=theme.panel,
+            text="Your files have been converted and are ready to download.",
+            bg=theme.background,
             fg=theme.muted,
             font=("Segoe UI", 10),
-            wraplength=470,
-            justify="left",
-        ).grid(row=1, column=1, sticky="w", pady=(4, 0))
+        ).grid(row=2, column=0, sticky="n", pady=(8, 0))
+
+        summary = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=16, pady=12)
+        summary.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        for column in range(3):
+            summary.columnconfigure(column, weight=1)
+
+        first_output = outputs[0]
+        output_format = first_output.suffix.upper().lstrip(".") or "Folder"
+        output_location = str(first_output.parent if first_output.is_file() else first_output)
+        summary_items = (
+            (f"{len(outputs)} file{'s' if len(outputs) != 1 else ''} converted", "Ready to open", "file"),
+            (f"{output_format}", "Output format", "file"),
+            (self.display_path(Path(output_location), max_length=32), "Saved location", "folder"),
+        )
+        for column, (title, subtitle, icon_name) in enumerate(summary_items):
+            item = tk.Frame(summary, bg=theme.panel)
+            item.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 12, 0))
+            item.columnconfigure(1, weight=1)
+            self.icon_label(item, icon_name).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 10))
+            ttk.Label(item, text=title, style="Card.TLabel").grid(row=0, column=1, sticky="w")
+            ttk.Label(item, text=subtitle, style="Muted.TLabel").grid(row=1, column=1, sticky="w", pady=(3, 0))
 
         content = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=16, pady=14)
-        content.grid(row=1, column=0, sticky="nsew", pady=(0, 14))
+        content.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
         content.columnconfigure(0, weight=1)
-        content.rowconfigure(1, weight=1)
-        tk.Label(content, text="Converted output", bg=theme.panel, fg=theme.text, font=("Segoe UI", 10, "bold")).grid(
+        tk.Label(content, text="Converted files", bg=theme.panel, fg=theme.text, font=("Segoe UI", 10, "bold")).grid(
             row=0,
             column=0,
             sticky="w",
             pady=(0, 8),
         )
 
-        listbox = tk.Listbox(
-            content,
-            bg=theme.log_background,
-            fg=theme.log_text,
-            selectbackground=theme.selection,
-            selectforeground=theme.text,
-            activestyle="none",
-            bd=0,
-            highlightthickness=0,
-            font=("Segoe UI", 10),
-        )
-        listbox.grid(row=1, column=0, sticky="nsew")
-        for output in outputs:
-            listbox.insert("end", str(output))
-        listbox.selection_set(0)
+        def size_label(path: Path) -> str:
+            if path.is_dir():
+                return "Folder"
+            try:
+                size = path.stat().st_size
+            except OSError:
+                return "Unknown"
+            if size >= 1024 * 1024:
+                return f"{size / (1024 * 1024):.1f} MB"
+            if size >= 1024:
+                return f"{size / 1024:.1f} KB"
+            return f"{size} B"
+
+        for index, output in enumerate(outputs[:5], start=1):
+            row = tk.Frame(content, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=12, pady=10)
+            row.grid(row=index, column=0, sticky="ew", pady=(0, 8))
+            row.columnconfigure(1, weight=1)
+            self.icon_label(row, "file").grid(row=0, column=0, sticky="w", padx=(0, 10))
+            ttk.Label(row, text=output.name, style="Card.TLabel").grid(row=0, column=1, sticky="w")
+            ttk.Label(row, text=size_label(output), style="Muted.TLabel").grid(row=0, column=2, sticky="e", padx=(12, 18))
+            ttk.Label(row, text="Completed", style="StatusGood.TLabel").grid(row=0, column=3, sticky="e", padx=(0, 18))
+            self.icon_button(row, "Open", "open", "Ghost.TButton", lambda path=output: self.open_path(path)).grid(row=0, column=4, sticky="e")
 
         button_row = tk.Frame(shell, bg=theme.background)
-        button_row.grid(row=2, column=0, sticky="ew")
+        button_row.grid(row=3, column=0, sticky="ew")
         button_row.columnconfigure(3, weight=1)
 
         def selected_output() -> Path:
-            selection = listbox.curselection()
-            if selection:
-                return outputs[selection[0]]
             return outputs[0]
 
         self.icon_button(button_row, "Open File", "open", "Accent.TButton", lambda: self.open_path(selected_output())).grid(
@@ -2971,7 +3060,7 @@ function assertAllowedExtension(filename, allowedExtensions) {
         ).grid(row=0, column=2, sticky="w")
 
         page.attributes("-topmost", True)
-        self.center_popup(page, 640, 430)
+        self.center_popup(page, 760, 540)
         page.after(500, lambda: page.attributes("-topmost", False))
 
     def open_path(self, path: Path) -> None:
