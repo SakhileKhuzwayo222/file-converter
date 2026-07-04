@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import base64
 import html
+import math
 import os
+import struct
 import threading
 import tkinter as tk
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -528,6 +532,406 @@ SUPPORTED_OPEN_EXTENSIONS = tuple(
 )
 
 
+FC_ICON_SOURCE = (
+    ("rounded_rect", 2.5, 2.0, 19.0, 20.0, 3.2, "fc_dark"),
+    ("rounded_rect", 2.0, 2.0, 18.8, 18.8, 3.0, "accent"),
+    ("fill_rect", 17.2, 6.0, 3.6, 14.8, "fc_shadow"),
+    ("fill_rect", 4.7, 17.2, 14.3, 3.6, "fc_dark"),
+    ("fill_rect", 6.0, 6.0, 2.0, 12.0, "white"),
+    ("fill_rect", 6.0, 6.0, 7.4, 2.0, "white"),
+    ("fill_rect", 6.0, 11.0, 6.0, 2.0, "white"),
+    ("fill_rect", 14.6, 6.0, 5.0, 2.0, "white"),
+    ("fill_rect", 12.6, 8.0, 2.0, 8.0, "white"),
+    ("fill_rect", 14.6, 16.0, 5.0, 2.0, "white"),
+)
+
+
+ICON_SOURCES = {
+    "home": (
+        ("polyline", ((3.5, 10.5), (12.0, 4.0), (20.5, 10.5)), 1.8, "ink"),
+        ("line", 5.5, 10.0, 5.5, 20.0, 1.8, "ink"),
+        ("line", 18.5, 10.0, 18.5, 20.0, 1.8, "ink"),
+        ("line", 5.5, 20.0, 10.0, 20.0, 1.8, "ink"),
+        ("line", 14.0, 20.0, 18.5, 20.0, 1.8, "ink"),
+        ("rect", 10.0, 14.0, 4.0, 6.0, 1.7, "ink"),
+    ),
+    "convert": (
+        ("line", 5.0, 7.0, 18.0, 7.0, 1.8, "ink"),
+        ("polyline", ((15.0, 4.0), (18.5, 7.0), (15.0, 10.0)), 1.8, "ink"),
+        ("line", 19.0, 17.0, 6.0, 17.0, 1.8, "ink"),
+        ("polyline", ((9.0, 14.0), (5.5, 17.0), (9.0, 20.0)), 1.8, "ink"),
+    ),
+    "open": (
+        ("polyline", ((7.0, 4.0), (14.0, 4.0), (18.0, 8.0), (18.0, 20.0), (7.0, 20.0), (7.0, 4.0)), 1.7, "ink"),
+        ("polyline", ((14.0, 4.0), (14.0, 8.0), (18.0, 8.0)), 1.5, "muted"),
+        ("line", 10.0, 14.0, 19.0, 5.0, 1.8, "accent"),
+        ("polyline", ((14.7, 5.0), (19.0, 5.0), (19.0, 9.3)), 1.8, "accent"),
+    ),
+    "edit": (
+        ("polygon", ((5.0, 17.2), (6.7, 20.0), (9.8, 18.6), (18.0, 10.4), (13.4, 5.8)), "accent"),
+        ("line", 13.4, 5.8, 18.0, 10.4, 1.6, "ink"),
+        ("line", 6.4, 17.0, 8.9, 19.5, 1.4, "ink"),
+        ("line", 4.8, 20.2, 9.0, 18.8, 1.5, "ink"),
+        ("line", 15.2, 4.0, 20.0, 8.8, 2.2, "muted"),
+    ),
+    "download": (
+        ("line", 12.0, 4.0, 12.0, 14.5, 1.9, "ink"),
+        ("polyline", ((7.5, 10.5), (12.0, 15.0), (16.5, 10.5)), 1.9, "ink"),
+        ("polyline", ((5.0, 17.0), (5.0, 20.0), (19.0, 20.0), (19.0, 17.0)), 1.8, "ink"),
+    ),
+    "upload": (
+        ("line", 12.0, 15.0, 12.0, 4.5, 1.9, "ink"),
+        ("polyline", ((7.5, 8.5), (12.0, 4.0), (16.5, 8.5)), 1.9, "ink"),
+        ("polyline", ((5.0, 17.0), (5.0, 20.0), (19.0, 20.0), (19.0, 17.0)), 1.8, "ink"),
+    ),
+    "folder": (
+        ("polyline", ((3.5, 7.0), (9.0, 7.0), (10.8, 9.0), (20.5, 9.0), (20.5, 19.5), (3.5, 19.5), (3.5, 7.0)), 1.7, "ink"),
+        ("line", 3.5, 10.5, 20.5, 10.5, 1.4, "accent"),
+    ),
+    "file": (
+        ("polyline", ((7.0, 3.5), (15.0, 3.5), (19.0, 7.5), (19.0, 20.5), (7.0, 20.5), (7.0, 3.5)), 1.7, "ink"),
+        ("polyline", ((15.0, 3.5), (15.0, 8.0), (19.0, 8.0)), 1.4, "muted"),
+        ("line", 9.5, 11.0, 16.5, 11.0, 1.3, "accent"),
+        ("line", 9.5, 14.0, 16.5, 14.0, 1.3, "accent"),
+        ("line", 9.5, 17.0, 14.0, 17.0, 1.3, "accent"),
+    ),
+    "document": (
+        ("polyline", ((7.0, 3.5), (15.0, 3.5), (19.0, 7.5), (19.0, 20.5), (7.0, 20.5), (7.0, 3.5)), 1.7, "blue"),
+        ("polyline", ((15.0, 3.5), (15.0, 8.0), (19.0, 8.0)), 1.4, "blue"),
+        ("line", 9.5, 11.0, 16.5, 11.0, 1.3, "ink"),
+        ("line", 9.5, 14.0, 16.5, 14.0, 1.3, "ink"),
+        ("line", 9.5, 17.0, 14.0, 17.0, 1.3, "ink"),
+    ),
+    "data": (
+        ("polyline", ((7.0, 3.5), (15.0, 3.5), (19.0, 7.5), (19.0, 20.5), (7.0, 20.5), (7.0, 3.5)), 1.7, "green"),
+        ("line", 9.5, 10.0, 16.5, 10.0, 1.4, "green"),
+        ("line", 9.5, 13.0, 16.5, 13.0, 1.4, "green"),
+        ("line", 9.5, 16.0, 16.5, 16.0, 1.4, "green"),
+    ),
+    "audio": (
+        ("line", 14.0, 5.0, 14.0, 16.2, 2.0, "pink"),
+        ("line", 14.0, 5.0, 18.5, 6.2, 1.8, "pink"),
+        ("circle", 9.0, 17.0, 3.0, 1.9, "pink"),
+        ("circle", 15.0, 16.0, 2.5, 1.9, "pink"),
+    ),
+    "video": (
+        ("rect", 4.0, 7.0, 11.0, 10.0, 1.8, "purple"),
+        ("polygon", ((15.0, 10.0), (20.5, 7.2), (20.5, 16.8), (15.0, 14.0)), "purple"),
+    ),
+    "media": (
+        ("rect", 4.0, 5.0, 16.0, 14.0, 1.7, "blue"),
+        ("circle", 9.0, 9.0, 1.8, 1.4, "blue"),
+        ("polyline", ((5.5, 17.0), (10.0, 12.5), (13.0, 15.2), (15.0, 13.0), (19.0, 17.0)), 1.7, "blue"),
+    ),
+    "archive": (
+        ("polygon", ((12.0, 4.0), (19.0, 8.0), (12.0, 12.0), (5.0, 8.0)), "orange"),
+        ("polyline", ((5.0, 12.0), (12.0, 16.0), (19.0, 12.0)), 1.8, "orange"),
+        ("polyline", ((5.0, 16.0), (12.0, 20.0), (19.0, 16.0)), 1.8, "orange"),
+    ),
+    "code": (
+        ("polyline", ((9.0, 7.0), (5.0, 12.0), (9.0, 17.0)), 1.9, "blue"),
+        ("polyline", ((15.0, 7.0), (19.0, 12.0), (15.0, 17.0)), 1.9, "blue"),
+        ("line", 13.0, 5.5, 11.0, 18.5, 1.7, "ink"),
+    ),
+    "security": (
+        ("polygon", ((12.0, 3.5), (19.0, 6.5), (18.0, 13.8), (12.0, 20.5), (6.0, 13.8), (5.0, 6.5)), "green"),
+        ("polyline", ((8.5, 12.0), (11.0, 14.5), (16.0, 9.5)), 1.8, "white"),
+    ),
+    "check": (
+        ("circle", 12.0, 12.0, 8.0, 1.7, "green"),
+        ("polyline", ((8.0, 12.2), (11.0, 15.0), (16.8, 9.0)), 1.9, "green"),
+    ),
+    "cancel": (
+        ("circle", 12.0, 12.0, 8.0, 1.7, "red"),
+        ("line", 8.5, 8.5, 15.5, 15.5, 1.9, "red"),
+        ("line", 15.5, 8.5, 8.5, 15.5, 1.9, "red"),
+    ),
+    "close": (
+        ("line", 7.0, 7.0, 17.0, 17.0, 1.8, "muted"),
+        ("line", 17.0, 7.0, 7.0, 17.0, 1.8, "muted"),
+    ),
+    "save": (
+        ("rect", 5.0, 4.0, 14.0, 16.0, 1.8, "ink"),
+        ("line", 8.0, 4.0, 8.0, 9.0, 1.5, "ink"),
+        ("line", 15.0, 4.0, 15.0, 9.0, 1.5, "ink"),
+        ("rect", 8.0, 13.0, 8.0, 5.0, 1.5, "accent"),
+    ),
+    "theme": (
+        ("circle", 12.0, 12.0, 4.0, 1.7, "orange"),
+        ("line", 12.0, 3.0, 12.0, 5.0, 1.6, "orange"),
+        ("line", 12.0, 19.0, 12.0, 21.0, 1.6, "orange"),
+        ("line", 3.0, 12.0, 5.0, 12.0, 1.6, "orange"),
+        ("line", 19.0, 12.0, 21.0, 12.0, 1.6, "orange"),
+        ("line", 5.6, 5.6, 7.0, 7.0, 1.5, "orange"),
+        ("line", 17.0, 17.0, 18.4, 18.4, 1.5, "orange"),
+        ("line", 18.4, 5.6, 17.0, 7.0, 1.5, "orange"),
+        ("line", 7.0, 17.0, 5.6, 18.4, 1.5, "orange"),
+    ),
+    "settings": (
+        ("circle", 12.0, 12.0, 3.0, 1.8, "ink"),
+        ("circle", 12.0, 12.0, 7.0, 1.6, "ink"),
+        ("line", 12.0, 3.0, 12.0, 5.0, 1.7, "ink"),
+        ("line", 12.0, 19.0, 12.0, 21.0, 1.7, "ink"),
+        ("line", 3.0, 12.0, 5.0, 12.0, 1.7, "ink"),
+        ("line", 19.0, 12.0, 21.0, 12.0, 1.7, "ink"),
+        ("line", 5.7, 5.7, 7.1, 7.1, 1.7, "ink"),
+        ("line", 16.9, 16.9, 18.3, 18.3, 1.7, "ink"),
+        ("line", 18.3, 5.7, 16.9, 7.1, 1.7, "ink"),
+        ("line", 7.1, 16.9, 5.7, 18.3, 1.7, "ink"),
+    ),
+}
+
+
+def hex_to_rgba(color: str) -> tuple[int, int, int, int]:
+    value = color.strip().lstrip("#")
+    if len(value) == 3:
+        value = "".join(channel * 2 for channel in value)
+    return int(value[0:2], 16), int(value[2:4], 16), int(value[4:6], 16), 255
+
+
+def token_color(token: str, palette: dict[str, str]) -> tuple[int, int, int, int]:
+    return hex_to_rgba(palette.get(token, token))
+
+
+def put_rgba_pixel(pixels: bytearray, width: int, height: int, x: int, y: int, color: tuple[int, int, int, int]) -> None:
+    if x < 0 or y < 0 or x >= width or y >= height:
+        return
+    index = (y * width + x) * 4
+    pixels[index : index + 4] = bytes(color)
+
+
+def draw_line_icon(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    unit: float,
+    x1: float,
+    y1: float,
+    x2: float,
+    y2: float,
+    stroke: float,
+    color: tuple[int, int, int, int],
+) -> None:
+    padding = stroke / 2 + 0.8
+    left = max(0, int(math.floor((min(x1, x2) - padding) * unit)))
+    right = min(width, int(math.ceil((max(x1, x2) + padding) * unit)))
+    top = max(0, int(math.floor((min(y1, y2) - padding) * unit)))
+    bottom = min(height, int(math.ceil((max(y1, y2) + padding) * unit)))
+    dx = x2 - x1
+    dy = y2 - y1
+    length_squared = dx * dx + dy * dy
+    radius = stroke / 2
+    for py in range(top, bottom):
+        cy = (py + 0.5) / unit
+        for px in range(left, right):
+            cx = (px + 0.5) / unit
+            if length_squared:
+                position = max(0.0, min(1.0, ((cx - x1) * dx + (cy - y1) * dy) / length_squared))
+                nearest_x = x1 + position * dx
+                nearest_y = y1 + position * dy
+            else:
+                nearest_x = x1
+                nearest_y = y1
+            if math.hypot(cx - nearest_x, cy - nearest_y) <= radius:
+                put_rgba_pixel(pixels, width, height, px, py, color)
+
+
+def draw_fill_rect_icon(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    unit: float,
+    x: float,
+    y: float,
+    rect_width: float,
+    rect_height: float,
+    color: tuple[int, int, int, int],
+) -> None:
+    left = max(0, int(math.floor(x * unit)))
+    right = min(width, int(math.ceil((x + rect_width) * unit)))
+    top = max(0, int(math.floor(y * unit)))
+    bottom = min(height, int(math.ceil((y + rect_height) * unit)))
+    for py in range(top, bottom):
+        for px in range(left, right):
+            put_rgba_pixel(pixels, width, height, px, py, color)
+
+
+def draw_rounded_rect_icon(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    unit: float,
+    x: float,
+    y: float,
+    rect_width: float,
+    rect_height: float,
+    radius: float,
+    color: tuple[int, int, int, int],
+) -> None:
+    left = max(0, int(math.floor(x * unit)))
+    right = min(width, int(math.ceil((x + rect_width) * unit)))
+    top = max(0, int(math.floor(y * unit)))
+    bottom = min(height, int(math.ceil((y + rect_height) * unit)))
+    for py in range(top, bottom):
+        cy = (py + 0.5) / unit
+        for px in range(left, right):
+            cx = (px + 0.5) / unit
+            nearest_x = min(max(cx, x + radius), x + rect_width - radius)
+            nearest_y = min(max(cy, y + radius), y + rect_height - radius)
+            if math.hypot(cx - nearest_x, cy - nearest_y) <= radius:
+                put_rgba_pixel(pixels, width, height, px, py, color)
+
+
+def draw_circle_icon(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    unit: float,
+    cx: float,
+    cy: float,
+    radius: float,
+    stroke: float | None,
+    color: tuple[int, int, int, int],
+) -> None:
+    padding = (stroke or 0) / 2 + 0.8
+    left = max(0, int(math.floor((cx - radius - padding) * unit)))
+    right = min(width, int(math.ceil((cx + radius + padding) * unit)))
+    top = max(0, int(math.floor((cy - radius - padding) * unit)))
+    bottom = min(height, int(math.ceil((cy + radius + padding) * unit)))
+    for py in range(top, bottom):
+        py_coord = (py + 0.5) / unit
+        for px in range(left, right):
+            px_coord = (px + 0.5) / unit
+            distance = math.hypot(px_coord - cx, py_coord - cy)
+            if stroke is None:
+                hit = distance <= radius
+            else:
+                hit = abs(distance - radius) <= stroke / 2
+            if hit:
+                put_rgba_pixel(pixels, width, height, px, py, color)
+
+
+def point_in_polygon(x: float, y: float, points: tuple[tuple[float, float], ...]) -> bool:
+    inside = False
+    previous_x, previous_y = points[-1]
+    for current_x, current_y in points:
+        crosses = (current_y > y) != (previous_y > y)
+        if crosses:
+            slope_x = (previous_x - current_x) * (y - current_y) / ((previous_y - current_y) or 1e-9) + current_x
+            if x < slope_x:
+                inside = not inside
+        previous_x, previous_y = current_x, current_y
+    return inside
+
+
+def draw_polygon_icon(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    unit: float,
+    points: tuple[tuple[float, float], ...],
+    color: tuple[int, int, int, int],
+) -> None:
+    left = max(0, int(math.floor(min(point[0] for point in points) * unit)))
+    right = min(width, int(math.ceil(max(point[0] for point in points) * unit)))
+    top = max(0, int(math.floor(min(point[1] for point in points) * unit)))
+    bottom = min(height, int(math.ceil(max(point[1] for point in points) * unit)))
+    for py in range(top, bottom):
+        cy = (py + 0.5) / unit
+        for px in range(left, right):
+            cx = (px + 0.5) / unit
+            if point_in_polygon(cx, cy, points):
+                put_rgba_pixel(pixels, width, height, px, py, color)
+
+
+def render_icon_pixels(
+    commands: tuple[tuple[object, ...], ...],
+    palette: dict[str, str],
+    size: int,
+    scale: int,
+) -> tuple[int, int, bytearray]:
+    high_size = size * scale
+    unit = high_size / 24.0
+    high_pixels = bytearray(high_size * high_size * 4)
+    for command in commands:
+        kind = command[0]
+        if kind == "line":
+            _, x1, y1, x2, y2, stroke, token = command
+            draw_line_icon(high_pixels, high_size, high_size, unit, float(x1), float(y1), float(x2), float(y2), float(stroke), token_color(str(token), palette))
+        elif kind == "polyline":
+            _, points, stroke, token = command
+            point_tuple = tuple((float(x), float(y)) for x, y in points)
+            for start, end in zip(point_tuple, point_tuple[1:]):
+                draw_line_icon(high_pixels, high_size, high_size, unit, start[0], start[1], end[0], end[1], float(stroke), token_color(str(token), palette))
+        elif kind == "rect":
+            _, x, y, rect_width, rect_height, stroke, token = command
+            color = token_color(str(token), palette)
+            x = float(x)
+            y = float(y)
+            rect_width = float(rect_width)
+            rect_height = float(rect_height)
+            stroke = float(stroke)
+            draw_line_icon(high_pixels, high_size, high_size, unit, x, y, x + rect_width, y, stroke, color)
+            draw_line_icon(high_pixels, high_size, high_size, unit, x + rect_width, y, x + rect_width, y + rect_height, stroke, color)
+            draw_line_icon(high_pixels, high_size, high_size, unit, x + rect_width, y + rect_height, x, y + rect_height, stroke, color)
+            draw_line_icon(high_pixels, high_size, high_size, unit, x, y + rect_height, x, y, stroke, color)
+        elif kind == "fill_rect":
+            _, x, y, rect_width, rect_height, token = command
+            draw_fill_rect_icon(high_pixels, high_size, high_size, unit, float(x), float(y), float(rect_width), float(rect_height), token_color(str(token), palette))
+        elif kind == "rounded_rect":
+            _, x, y, rect_width, rect_height, radius, token = command
+            draw_rounded_rect_icon(high_pixels, high_size, high_size, unit, float(x), float(y), float(rect_width), float(rect_height), float(radius), token_color(str(token), palette))
+        elif kind == "circle":
+            _, cx, cy, radius, stroke, token = command
+            draw_circle_icon(high_pixels, high_size, high_size, unit, float(cx), float(cy), float(radius), float(stroke), token_color(str(token), palette))
+        elif kind == "fill_circle":
+            _, cx, cy, radius, token = command
+            draw_circle_icon(high_pixels, high_size, high_size, unit, float(cx), float(cy), float(radius), None, token_color(str(token), palette))
+        elif kind == "polygon":
+            _, points, token = command
+            point_tuple = tuple((float(x), float(y)) for x, y in points)
+            draw_polygon_icon(high_pixels, high_size, high_size, unit, point_tuple, token_color(str(token), palette))
+
+    pixels = bytearray(size * size * 4)
+    samples = scale * scale
+    for y in range(size):
+        for x in range(size):
+            red = green = blue = alpha = 0
+            for sample_y in range(scale):
+                for sample_x in range(scale):
+                    source_index = (((y * scale + sample_y) * high_size) + (x * scale + sample_x)) * 4
+                    red += high_pixels[source_index]
+                    green += high_pixels[source_index + 1]
+                    blue += high_pixels[source_index + 2]
+                    alpha += high_pixels[source_index + 3]
+            target_index = (y * size + x) * 4
+            pixels[target_index : target_index + 4] = bytes((red // samples, green // samples, blue // samples, alpha // samples))
+    return size, size, pixels
+
+
+def png_bytes_from_rgba(width: int, height: int, pixels: bytes | bytearray) -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    raw_rows = bytearray()
+    stride = width * 4
+    for row in range(height):
+        raw_rows.append(0)
+        raw_rows.extend(pixels[row * stride : (row + 1) * stride])
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(bytes(raw_rows), 9))
+        + chunk(b"IEND", b"")
+    )
+
+
+def inline_icon_photo(commands: tuple[tuple[object, ...], ...], palette: dict[str, str], size: int = 22, scale: int = 4) -> tk.PhotoImage:
+    width, height, pixels = render_icon_pixels(commands, palette, size, scale)
+    encoded = base64.b64encode(png_bytes_from_rgba(width, height, pixels)).decode("ascii")
+    return tk.PhotoImage(data=encoded, format="png")
+
+
 class ConverterApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -597,6 +1001,7 @@ class ConverterApp:
         self.window_icon = self.create_window_icon()
         self.root.iconphoto(True, self.window_icon)
         self.ui_icons = self.create_ui_icons()
+        self.logo_image: tk.PhotoImage | None = None
         self.icon_buttons: list[tuple[ttk.Button, str]] = []
         self.icon_labels: list[tuple[tk.Label, str]] = []
 
@@ -621,158 +1026,33 @@ class ConverterApp:
         return [conversion.to_label for conversion in CONVERSIONS if conversion.from_label == source_label]
 
     def create_window_icon(self) -> tk.PhotoImage:
-        icon = tk.PhotoImage(width=64, height=64)
-        icon.put("#0f766e", to=(12, 6, 52, 58))
-        icon.put("#0f766e", to=(7, 12, 57, 52))
-        icon.put("#14b8a6", to=(12, 10, 52, 50))
-        icon.put("#14b8a6", to=(10, 14, 54, 48))
-        icon.put("#115e59", to=(12, 49, 52, 58))
-        icon.put("#0b4f4a", to=(47, 14, 57, 52))
-
-        icon.put("#ffffff", to=(18, 17, 24, 47))
-        icon.put("#ffffff", to=(18, 17, 36, 23))
-        icon.put("#ffffff", to=(18, 30, 33, 36))
-
-        icon.put("#ffffff", to=(37, 17, 51, 23))
-        icon.put("#ffffff", to=(37, 41, 51, 47))
-        icon.put("#ffffff", to=(34, 20, 40, 44))
-        icon.put("#14b8a6", to=(45, 24, 52, 40))
-        return icon
+        return inline_icon_photo(
+            FC_ICON_SOURCE,
+            {
+                "accent": "#14b8a6",
+                "fc_dark": "#0f766e",
+                "fc_shadow": "#0b4f4a",
+                "white": "#ffffff",
+            },
+            size=128,
+            scale=4,
+        )
 
     def create_ui_icons(self) -> dict[str, tk.PhotoImage]:
         theme = self.theme
-        ink = theme.text
-
-        def new_icon() -> tk.PhotoImage:
-            return tk.PhotoImage(width=18, height=18)
-
-        def rect(icon: tk.PhotoImage, color: str, x1: int, y1: int, x2: int, y2: int) -> None:
-            icon.put(color, to=(x1, y1, x2, y2))
-
-        icons: dict[str, tk.PhotoImage] = {}
-
-        upload = new_icon()
-        rect(upload, ink, 8, 3, 10, 13)
-        rect(upload, ink, 5, 6, 13, 8)
-        rect(upload, ink, 2, 13, 16, 16)
-        rect(upload, ink, 3, 11, 5, 13)
-        rect(upload, ink, 13, 11, 15, 13)
-        icons["upload"] = upload
-
-        folder = new_icon()
-        rect(folder, ink, 2, 5, 8, 8)
-        rect(folder, ink, 2, 7, 16, 15)
-        rect(folder, theme.selection, 3, 9, 15, 14)
-        icons["folder"] = folder
-
-        edit = new_icon()
-        rect(edit, ink, 4, 13, 7, 16)
-        rect(edit, ink, 6, 11, 9, 14)
-        rect(edit, ink, 8, 9, 11, 12)
-        rect(edit, ink, 10, 7, 13, 10)
-        rect(edit, ink, 12, 5, 15, 8)
-        rect(edit, theme.muted, 13, 4, 16, 7)
-        icons["edit"] = edit
-
-        convert = new_icon()
-        rect(convert, ink, 2, 8, 13, 10)
-        rect(convert, ink, 11, 5, 13, 13)
-        rect(convert, ink, 13, 7, 16, 11)
-        icons["convert"] = convert
-
-        cancel = new_icon()
-        for offset in range(5):
-            rect(cancel, ink, 4 + offset, 4 + offset, 6 + offset, 6 + offset)
-            rect(cancel, ink, 12 - offset, 4 + offset, 14 - offset, 6 + offset)
-        icons["cancel"] = cancel
-
-        close = new_icon()
-        for offset in range(5):
-            rect(close, theme.muted, 4 + offset, 4 + offset, 6 + offset, 6 + offset)
-            rect(close, theme.muted, 12 - offset, 4 + offset, 14 - offset, 6 + offset)
-        icons["close"] = close
-
-        check = new_icon()
-        rect(check, ink, 3, 9, 5, 11)
-        rect(check, ink, 5, 11, 7, 13)
-        rect(check, ink, 7, 10, 9, 12)
-        rect(check, ink, 9, 8, 11, 10)
-        rect(check, ink, 11, 6, 15, 8)
-        icons["check"] = check
-
-        save = new_icon()
-        rect(save, ink, 3, 3, 15, 16)
-        rect(save, theme.background, 5, 5, 12, 8)
-        rect(save, theme.selection, 6, 11, 13, 15)
-        rect(save, theme.accent_text, 11, 5, 13, 8)
-        icons["save"] = save
-
-        theme_icon = new_icon()
-        rect(theme_icon, ink, 7, 2, 11, 4)
-        rect(theme_icon, ink, 7, 14, 11, 16)
-        rect(theme_icon, ink, 2, 7, 4, 11)
-        rect(theme_icon, ink, 14, 7, 16, 11)
-        rect(theme_icon, ink, 6, 6, 12, 12)
-        rect(theme_icon, theme.background, 9, 5, 13, 13)
-        icons["theme"] = theme_icon
-
-        file_icon = new_icon()
-        rect(file_icon, ink, 4, 2, 12, 16)
-        rect(file_icon, ink, 12, 5, 15, 16)
-        rect(file_icon, theme.background, 6, 6, 12, 8)
-        rect(file_icon, theme.background, 6, 10, 13, 12)
-        icons["file"] = file_icon
-
-        open_icon = new_icon()
-        rect(open_icon, ink, 4, 3, 13, 16)
-        rect(open_icon, theme.background, 6, 6, 12, 8)
-        rect(open_icon, theme.background, 6, 10, 12, 12)
-        rect(open_icon, ink, 10, 4, 16, 6)
-        rect(open_icon, ink, 14, 4, 16, 10)
-        rect(open_icon, ink, 11, 7, 15, 11)
-        icons["open"] = open_icon
-
-        download = new_icon()
-        rect(download, ink, 8, 3, 10, 12)
-        rect(download, ink, 5, 9, 13, 11)
-        rect(download, ink, 6, 11, 12, 13)
-        rect(download, ink, 3, 14, 15, 16)
-        icons["download"] = download
-
-        home = new_icon()
-        rect(home, ink, 8, 2, 10, 4)
-        rect(home, ink, 6, 4, 12, 6)
-        rect(home, ink, 4, 6, 14, 8)
-        rect(home, ink, 3, 8, 15, 10)
-        rect(home, ink, 5, 10, 13, 16)
-        rect(home, theme.background, 8, 12, 10, 16)
-        icons["home"] = home
-
-        media = new_icon()
-        rect(media, ink, 3, 4, 15, 14)
-        rect(media, theme.background, 5, 6, 13, 12)
-        rect(media, ink, 7, 7, 12, 10)
-        rect(media, ink, 5, 11, 14, 13)
-        icons["media"] = media
-
-        code = new_icon()
-        rect(code, ink, 4, 5, 6, 7)
-        rect(code, ink, 3, 7, 5, 9)
-        rect(code, ink, 4, 9, 6, 11)
-        rect(code, ink, 12, 5, 14, 7)
-        rect(code, ink, 13, 7, 15, 9)
-        rect(code, ink, 12, 9, 14, 11)
-        rect(code, ink, 8, 4, 10, 14)
-        icons["code"] = code
-
-        security = new_icon()
-        rect(security, ink, 5, 3, 13, 5)
-        rect(security, ink, 4, 5, 14, 10)
-        rect(security, ink, 6, 10, 12, 15)
-        rect(security, theme.background, 8, 7, 10, 11)
-        icons["security"] = security
-
-        return icons
+        palette = {
+            "ink": theme.text,
+            "muted": theme.muted,
+            "accent": theme.accent,
+            "white": "#ffffff",
+            "blue": "#2563eb",
+            "green": "#059669",
+            "orange": "#f59e0b",
+            "pink": "#db2777",
+            "purple": "#7c3aed",
+            "red": theme.danger,
+        }
+        return {name: inline_icon_photo(source, palette) for name, source in ICON_SOURCES.items()}
 
     def register_background(self, widget: tk.Widget, role: str) -> None:
         self.tk_backgrounds.append((widget, role))
@@ -967,7 +1247,7 @@ class ConverterApp:
 
         self.theme_button = self.icon_button(bar, "Light", "theme", "Ghost.TButton", self.toggle_theme)
         self.theme_button.grid(row=0, column=3, rowspan=2, sticky="e", padx=(0, 10))
-        self.icon_button(bar, "Settings", "security", "Ghost.TButton", lambda: self.show_info("Settings", "More settings are coming soon.")).grid(
+        self.icon_button(bar, "Settings", "settings", "Ghost.TButton", lambda: self.show_info("Settings", "More settings are coming soon.")).grid(
             row=0,
             column=4,
             rowspan=2,
@@ -1401,13 +1681,13 @@ class ConverterApp:
             column=1,
             sticky="nw",
         )
-        self.theme_button = self.icon_button(header, "Dark mode", "theme", "Ghost.TButton", self.toggle_theme)
+        self.theme_button = self.icon_button(header, "Light", "theme", "Ghost.TButton", self.toggle_theme)
         self.theme_button.grid(row=0, column=2, rowspan=2, sticky="e")
 
     def build_navigation(self) -> None:
         nav = tk.Frame(self.main, bd=0, highlightthickness=1, padx=18, pady=12)
         nav.grid(row=1, column=0, sticky="ew", pady=(0, 16))
-        nav.columnconfigure(5, weight=1)
+        nav.columnconfigure(6, weight=1)
         self.card_frames.append(nav)
         self.register_background(nav, "panel")
 
@@ -1415,6 +1695,7 @@ class ConverterApp:
         buttons = (
             ("home", "Home", "home", self.go_home),
             ("convert", "Convert", "convert", lambda: self.navigate_to("convert")),
+            ("opener", "File Opener", "open", lambda: self.navigate_to("opener")),
             ("editor", "FC Text Editor", "edit", lambda: self.navigate_to("editor")),
             ("downloads", "Downloads", "download", self.open_downloads_from_nav),
         )
@@ -1757,11 +2038,12 @@ class ConverterApp:
         )
 
         self.draw_logo()
-        self.theme_button.configure(text="Light mode" if self.theme_name.get() == "dark" else "Dark mode")
+        self.theme_button.configure(text="Dark" if self.theme_name.get() == "dark" else "Light")
         self.refresh_editor_popup_theme()
         self.refresh_upload_popup_theme()
         self.refresh_status_popup_theme()
         self.render_timeline()
+        self.root.update_idletasks()
 
     def configure_button_styles(self) -> None:
         theme = self.theme
@@ -1830,23 +2112,18 @@ class ConverterApp:
         canvas = self.logo_canvas
         canvas.delete("all")
         canvas.configure(bg=theme.panel)
-        canvas.create_oval(5, 5, 21, 21, fill="#14b8a6", outline="")
-        canvas.create_oval(33, 5, 49, 21, fill="#14b8a6", outline="")
-        canvas.create_oval(5, 33, 21, 49, fill="#115e59", outline="")
-        canvas.create_oval(33, 33, 49, 49, fill="#0b4f4a", outline="")
-        canvas.create_rectangle(13, 5, 41, 49, fill="#14b8a6", outline="")
-        canvas.create_rectangle(5, 13, 49, 41, fill="#14b8a6", outline="")
-        canvas.create_rectangle(40, 13, 49, 49, fill="#0b4f4a", outline="")
-        canvas.create_rectangle(9, 41, 49, 49, fill="#115e59", outline="")
-
-        canvas.create_rectangle(15, 14, 20, 40, fill="#ffffff", outline="")
-        canvas.create_rectangle(15, 14, 31, 19, fill="#ffffff", outline="")
-        canvas.create_rectangle(15, 25, 29, 30, fill="#ffffff", outline="")
-
-        canvas.create_rectangle(34, 14, 46, 19, fill="#ffffff", outline="")
-        canvas.create_rectangle(34, 35, 46, 40, fill="#ffffff", outline="")
-        canvas.create_rectangle(31, 17, 36, 38, fill="#ffffff", outline="")
-        canvas.create_rectangle(42, 20, 49, 34, fill="#14b8a6", outline="")
+        self.logo_image = inline_icon_photo(
+            FC_ICON_SOURCE,
+            {
+                "accent": "#14b8a6",
+                "fc_dark": "#0f766e",
+                "fc_shadow": "#0b4f4a",
+                "white": "#ffffff",
+            },
+            size=50,
+            scale=4,
+        )
+        canvas.create_image(25, 25, image=self.logo_image)
 
     def render_timeline(self, active_index: int | None = None, completed: int = 0, detail: str = "") -> None:
         self.active_step_index = active_index
