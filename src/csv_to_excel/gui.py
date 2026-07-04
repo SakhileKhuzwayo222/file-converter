@@ -516,6 +516,16 @@ CONVERSIONS = [
 ]
 
 FROM_FORMATS = list(dict.fromkeys(conversion.from_label for conversion in CONVERSIONS))
+SUPPORTED_OPEN_EXTENSIONS = tuple(
+    sorted(
+        {
+            extension
+            for conversion in CONVERSIONS
+            for extension in (*conversion.input_extensions, conversion.output_extension)
+            if extension.startswith(".")
+        }
+    )
+)
 
 
 class ConverterApp:
@@ -543,6 +553,8 @@ class ConverterApp:
         self.progress_text = tk.StringVar(value="0%")
         self.editor_status = tk.StringVar(value="Choose an editable source file")
         self.upload_status_text = tk.StringVar(value="No file selected yet")
+        self.opener_path = tk.StringVar()
+        self.opener_status = tk.StringVar(value="Choose any supported file to open")
 
         self.input_submitted = False
         self.cancel_event = threading.Event()
@@ -842,6 +854,7 @@ class ConverterApp:
         self.pages: dict[str, tk.Frame] = {}
         self.build_home_page()
         self.build_convert_page()
+        self.build_opener_page()
         self.build_editor_page()
         self.build_downloads_page()
         self.build_footer()
@@ -966,12 +979,13 @@ class ConverterApp:
         sidebar.grid(row=0, column=0, sticky="nsew")
         sidebar.grid_propagate(False)
         sidebar.columnconfigure(0, weight=1)
-        sidebar.rowconfigure(5, weight=1)
+        sidebar.rowconfigure(6, weight=1)
         self.card_frames.append(sidebar)
 
         buttons = (
             ("home", "Home", "home", self.go_home),
             ("convert", "Convert", "convert", lambda: self.navigate_to("convert")),
+            ("opener", "File Opener", "open", lambda: self.navigate_to("opener")),
             ("editor", "FC Text Editor", "edit", lambda: self.navigate_to("editor")),
             ("downloads", "Downloads", "download", self.open_downloads_from_nav),
         )
@@ -981,7 +995,7 @@ class ConverterApp:
             self.nav_buttons[key] = button
 
         secure = tk.Frame(sidebar, bd=0, highlightthickness=1, padx=14, pady=14)
-        secure.grid(row=6, column=0, sticky="sew")
+        secure.grid(row=7, column=0, sticky="sew")
         self.card_frames.append(secure)
         self.register_background(secure, "panel")
         self.icon_label(secure, "security").grid(row=0, column=0, sticky="w")
@@ -1035,9 +1049,9 @@ class ConverterApp:
         self.register_background(actions, "panel")
         quick_actions = (
             ("Convert Files", "Convert files between formats in seconds.", "convert", lambda: self.show_page("convert")),
-            ("Open Editor", "Edit and inspect files with the FC Text Editor.", "edit", lambda: self.show_page("editor")),
+            ("Open Any File", "Preview or open supported converter files.", "open", lambda: self.show_page("opener")),
             ("Recent Downloads", "View your recently converted files.", "download", lambda: self.show_page("downloads")),
-            ("Batch Jobs", "Manage and run batch conversion jobs.", "folder", lambda: self.show_page("convert")),
+            ("Open Editor", "Edit and inspect files with the FC Text Editor.", "edit", lambda: self.show_page("editor")),
         )
         for column, (title, subtitle, icon_name, command) in enumerate(quick_actions):
             card = tk.Frame(actions, bd=0, highlightthickness=1, padx=14, pady=14, cursor="hand2")
@@ -1086,10 +1100,10 @@ class ConverterApp:
         ttk.Label(panel, text="Supported categories", style="Section.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(panel, text="View all", style="AccentLink.TLabel").grid(row=0, column=1, sticky="e")
         categories = (
-            ("Documents", "DOCX, PDF, TXT, ODT, RTF...", "file", "12"),
-            ("Data", "CSV, XLSX, JSON, XML, DBF...", "file", "8"),
-            ("Audio", "MP3, WAV, AAC, FLAC, OGG...", "media", "10"),
-            ("Video", "MP4, MKV, AVI, MOV, WEBM...", "media", "9"),
+            ("Documents", "DOCX, PDF, TXT, ODT, RTF...", "document", "12"),
+            ("Data", "CSV, XLSX, JSON, XML, DBF...", "data", "8"),
+            ("Audio", "MP3, WAV, AAC, FLAC, OGG...", "audio", "10"),
+            ("Video", "MP4, MKV, AVI, MOV, WEBM...", "video", "9"),
         )
         for index, (title, subtitle, icon_name, count) in enumerate(categories, start=1):
             row_frame = tk.Frame(panel)
@@ -1150,6 +1164,128 @@ class ConverterApp:
         for index, (title, body) in enumerate(hint_rows, start=1):
             ttk.Label(hints, text=title, style="Card.TLabel").grid(row=index * 2 - 1, column=0, sticky="w", pady=(14, 0))
             ttk.Label(hints, text=body, style="Muted.TLabel", wraplength=230).grid(row=index * 2, column=0, sticky="w", pady=(2, 0))
+
+    def build_opener_page(self) -> None:
+        page = self.make_page("opener")
+        page.columnconfigure(0, weight=3)
+        page.columnconfigure(1, weight=1)
+        page.rowconfigure(0, weight=1)
+
+        left = tk.Frame(page)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        left.columnconfigure(0, weight=1)
+        self.register_background(left, "background")
+
+        opener = self.make_panel(left, 0, 0, sticky="ew")
+        opener.columnconfigure(0, weight=1)
+        ttk.Label(opener, text="File Opener", style="Hero.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            opener,
+            text="Open supported converter files, send editable files to FC Text Editor, or start a conversion.",
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(6, 16))
+
+        drop_box = tk.Frame(opener, bd=0, highlightthickness=1, padx=22, pady=26, cursor="hand2")
+        drop_box.grid(row=2, column=0, sticky="ew")
+        drop_box.columnconfigure(1, weight=1)
+        self.card_frames.append(drop_box)
+        self.icon_label(drop_box, "open").grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 16))
+        ttk.Label(drop_box, text="Choose a file to open", style="UploadTitle.TLabel").grid(row=0, column=1, sticky="sw")
+        ttk.Label(
+            drop_box,
+            text="Documents, data files, archives, audio, video, and outputs created by File Converter.",
+            style="UploadHint.TLabel",
+        ).grid(row=1, column=1, sticky="nw", pady=(4, 0))
+        self.icon_button(drop_box, "Choose File", "file", "Accent.TButton", self.choose_opener_file).grid(
+            row=0,
+            column=2,
+            rowspan=2,
+            sticky="e",
+            padx=(18, 0),
+        )
+        for widget in (drop_box,):
+            widget.bind("<Button-1>", lambda event: self.choose_opener_file())
+
+        status_card = tk.Frame(opener, bd=0, highlightthickness=1, padx=14, pady=12)
+        status_card.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+        status_card.columnconfigure(1, weight=1)
+        self.card_frames.append(status_card)
+        self.icon_label(status_card, "check").grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+        ttk.Label(status_card, text="Selected file", style="Card.TLabel").grid(row=0, column=1, sticky="w")
+        ttk.Label(status_card, textvariable=self.opener_status, style="Muted.TLabel", wraplength=680).grid(
+            row=1,
+            column=1,
+            sticky="w",
+            pady=(3, 0),
+        )
+
+        action_row = tk.Frame(opener)
+        action_row.grid(row=4, column=0, sticky="ew", pady=(14, 0))
+        for column in range(4):
+            action_row.columnconfigure(column, weight=1)
+        self.register_background(action_row, "panel")
+        self.icon_button(action_row, "Open File", "open", "Secondary.TButton", self.open_selected_file).grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=(0, 8),
+        )
+        self.icon_button(action_row, "Open Folder", "folder", "Secondary.TButton", self.open_selected_folder).grid(
+            row=0,
+            column=1,
+            sticky="ew",
+            padx=(0, 8),
+        )
+        self.icon_button(action_row, "Edit Text", "edit", "Secondary.TButton", self.send_opener_to_editor).grid(
+            row=0,
+            column=2,
+            sticky="ew",
+            padx=(0, 8),
+        )
+        self.icon_button(action_row, "Use for Convert", "convert", "Accent.TButton", self.send_opener_to_converter).grid(
+            row=0,
+            column=3,
+            sticky="ew",
+        )
+
+        tips = self.make_panel(left, 1, 0, sticky="ew", pady=(12, 0))
+        ttk.Label(tips, text="What the opener can do", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        opener_rows = (
+            ("Open with Windows", "Uses the default app already installed on this computer.", "open"),
+            ("Edit supported text", f"Sends {TEXT_EDIT_SUMMARY} to FC Text Editor.", "edit"),
+            ("Start a conversion", "Detects the source type and fills the Convert page for you.", "convert"),
+        )
+        for index, (title, body, icon_name) in enumerate(opener_rows, start=1):
+            row_frame = tk.Frame(tips)
+            row_frame.grid(row=index, column=0, sticky="ew", pady=(14, 0))
+            row_frame.columnconfigure(1, weight=1)
+            self.register_background(row_frame, "panel")
+            self.icon_label(row_frame, icon_name).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+            ttk.Label(row_frame, text=title, style="Card.TLabel").grid(row=0, column=1, sticky="w")
+            ttk.Label(row_frame, text=body, style="Muted.TLabel", wraplength=650).grid(row=1, column=1, sticky="w", pady=(2, 0))
+
+        right = tk.Frame(page)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        self.register_background(right, "background")
+        supported = self.make_panel(right, 0, 0, sticky="ew", pady=(0, 12))
+        ttk.Label(supported, text="Supported opener types", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        opener_groups = (
+            ("Documents", "PDF, DOC, DOCX, ODT, RTF, TXT, EPUB", "document"),
+            ("Data", "CSV, TSV, JSON, XLS, XLSX", "data"),
+            ("Archives", "ZIP folders and extracted outputs", "archive"),
+            ("Media", "MP3, WAV, MP4, MOV, MKV, AVI", "media"),
+        )
+        for index, (title, body, icon_name) in enumerate(opener_groups, start=1):
+            row_frame = tk.Frame(supported)
+            row_frame.grid(row=index, column=0, sticky="ew", pady=(14, 0))
+            row_frame.columnconfigure(1, weight=1)
+            self.register_background(row_frame, "panel")
+            self.icon_label(row_frame, icon_name).grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 12))
+            ttk.Label(row_frame, text=title, style="Card.TLabel").grid(row=0, column=1, sticky="w")
+            ttk.Label(row_frame, text=body, style="Muted.TLabel", wraplength=230).grid(row=1, column=1, sticky="w", pady=(2, 0))
+
+        self.build_quick_stats(right, 1)
 
     def build_editor_page(self) -> None:
         page = self.make_page("editor")
@@ -1717,6 +1853,96 @@ class ConverterApp:
         self.completed_step_count = completed
         self.current_step_detail = detail
         self.draw_status_stages()
+
+    def opener_filetypes(self) -> list[tuple[str, str]]:
+        patterns = " ".join(f"*{extension}" for extension in SUPPORTED_OPEN_EXTENSIONS)
+        return [("Supported File Converter files", patterns), ("All files", "*.*")]
+
+    def selected_opener_file(self) -> Path | None:
+        path_text = self.opener_path.get().strip()
+        if not path_text:
+            self.show_error("Choose a file", "Choose a file before using the opener actions.")
+            return None
+        path = Path(path_text)
+        if not path.is_file():
+            self.show_error("Missing file", f"This file no longer exists:\n{path}")
+            return None
+        return path
+
+    def set_opener_file(self, path: str | Path) -> None:
+        selected = Path(path)
+        self.opener_path.set(str(selected))
+        extension = selected.suffix.lower()
+        if extension in SUPPORTED_OPEN_EXTENSIONS:
+            conversion = self.matching_conversion_for_extension(extension)
+            if conversion:
+                self.opener_status.set(f"Ready: {selected.name} can be opened or converted as {conversion.input_label}.")
+            elif self.can_edit_extension(selected):
+                self.opener_status.set(f"Ready: {selected.name} can be opened or edited.")
+            else:
+                self.opener_status.set(f"Ready: {selected.name} is supported by File Converter outputs.")
+        else:
+            self.opener_status.set(f"Selected: {selected.name}. Windows can try to open it with the default app.")
+        self.status.set("File selected for opener")
+
+    def choose_opener_file(self) -> None:
+        if self.is_converting:
+            return
+        path = filedialog.askopenfilename(
+            title="Choose file to open",
+            filetypes=self.opener_filetypes(),
+        )
+        if path:
+            self.set_opener_file(path)
+
+    def open_selected_file(self) -> None:
+        path = self.selected_opener_file()
+        if path:
+            self.open_path(path)
+
+    def open_selected_folder(self) -> None:
+        path = self.selected_opener_file()
+        if path:
+            self.open_path(path.parent)
+
+    def send_opener_to_editor(self) -> None:
+        path = self.selected_opener_file()
+        if not path:
+            return
+        if not self.can_edit_extension(path):
+            self.show_error("Editor unavailable", f"The FC Text Editor supports {TEXT_EDIT_SUMMARY}.")
+            return
+
+        conversion = self.matching_conversion_for_extension(path.suffix.lower())
+        if conversion:
+            self.mode.set("file")
+            self.from_format.set(conversion.from_label)
+            self.to_format.set(conversion.to_label)
+            self.update_target_choices(clear_paths=False)
+        self.input_path.set(str(path))
+        self.input_submitted = False
+        self.update_upload_display()
+        self.load_editor_file(path)
+        self.show_page("editor")
+
+    def send_opener_to_converter(self) -> None:
+        path = self.selected_opener_file()
+        if not path:
+            return
+        conversion = self.matching_conversion_for_extension(path.suffix.lower())
+        if not conversion:
+            self.show_error("Conversion unavailable", "This file type can be opened, but it is not a supported conversion source.")
+            return
+
+        self.mode.set("file")
+        self.from_format.set(conversion.from_label)
+        self.to_format.set(conversion.to_label)
+        self.update_target_choices(clear_paths=False)
+        self.input_path.set(str(path))
+        self.input_submitted = False
+        self.update_upload_display()
+        self.status.set("File sent to Convert")
+        self.show_page("convert")
 
     def editable_filetypes(self) -> list[tuple[str, str]]:
         filetypes = [(label, " ".join(f"*{extension}" for extension in extensions)) for label, extensions in EDITABLE_FORMAT_GROUPS]
