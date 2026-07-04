@@ -7,7 +7,7 @@ from xml.etree import ElementTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from csv_to_excel.office import convert_pdf_to_word, convert_text_to_word
+from csv_to_excel.office import convert_epub_to_pdf, convert_pdf_to_word, convert_text_to_word
 
 
 NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
@@ -34,6 +34,39 @@ def write_simple_pdf(pdf_path: Path) -> None:
         + b"\nendstream\nendobj\n%%EOF\n"
     )
     pdf_path.write_bytes(pdf)
+
+
+def write_simple_epub(epub_path: Path) -> None:
+    with zipfile.ZipFile(epub_path, "w") as book:
+        book.writestr("mimetype", "application/epub+zip")
+        book.writestr(
+            "META-INF/container.xml",
+            """<?xml version="1.0"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>""",
+        )
+        book.writestr(
+            "OEBPS/content.opf",
+            """<?xml version="1.0"?>
+<package version="3.0" xmlns="http://www.idpf.org/2007/opf">
+  <manifest>
+    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="chapter"/>
+  </spine>
+</package>""",
+        )
+        book.writestr(
+            "OEBPS/chapter.xhtml",
+            """<?xml version="1.0"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <body><h1>Hello EPUB</h1><p>This chapter becomes a PDF.</p></body>
+</html>""",
+        )
 
 
 class OfficeConverterTests(unittest.TestCase):
@@ -74,6 +107,19 @@ class OfficeConverterTests(unittest.TestCase):
             self.assertIn("sample", text)
             self.assertIn("Hello PDF", text)
             self.assertIn("Second line", text)
+
+    def test_convert_epub_to_pdf_creates_pdf(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            epub_path = temp_dir / "book.epub"
+            write_simple_epub(epub_path)
+
+            output_path = convert_epub_to_pdf(epub_path)
+
+            data = output_path.read_bytes()
+            self.assertTrue(data.startswith(b"%PDF-1.4"))
+            self.assertIn(b"Hello EPUB", data)
+            self.assertIn(b"This chapter becomes a PDF.", data)
 
 
 if __name__ == "__main__":

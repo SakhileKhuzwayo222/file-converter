@@ -26,7 +26,7 @@ from .external import (
     convert_powerpoint_with_office,
     convert_word_with_office,
 )
-from .office import TEXT_DOCUMENT_EXTENSIONS, convert_pdf_to_word, convert_text_to_word
+from .office import EPUB_EXTENSIONS, TEXT_DOCUMENT_EXTENSIONS, convert_epub_to_pdf, convert_pdf_to_word, convert_text_to_word
 
 
 ConverterFunction = Callable[[Path, Path | None, str, str | None, bool], Path]
@@ -144,6 +144,10 @@ def text_to_word(input_path: Path, output_path: Path | None, encoding: str, deli
     return convert_text_to_word(input_path, output_path, encoding=encoding, overwrite=overwrite)
 
 
+def epub_to_pdf(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_epub_to_pdf(input_path, output_path, overwrite=overwrite)
+
+
 def word_to_pdf(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
     return convert_word_with_office(input_path, output_path, ".pdf", overwrite)
 
@@ -256,6 +260,18 @@ CONVERSIONS = [
         supports_encoding=False,
         supports_delimiter=False,
         convert=pdf_to_word,
+    ),
+    ConversionSpec(
+        from_label="EPUB (.epub)",
+        to_label="PDF Document (.pdf)",
+        input_label="EPUB",
+        input_extensions=EPUB_EXTENSIONS,
+        output_extension=".pdf",
+        output_description="PDF document",
+        output_tag="PDF",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=epub_to_pdf,
     ),
     ConversionSpec(
         from_label="Editable text files",

@@ -12,6 +12,7 @@ It includes a simple editor for text, data, web, code, script, and config files 
 - TSV to Excel `.xlsx`
 - JSON to Excel `.xlsx`
 - PDF to Word `.docx`
+- EPUB to PDF `.pdf`
 - Editable text/code/data files to Word `.docx`
 - Word files `.doc`, `.docx`, `.docm`, `.dot`, `.dotx`, `.dotm`, `.rtf` to PDF or `.docx`
 - Excel files `.xls`, `.xlsx`, `.xlsm`, `.xlsb`, `.xlt`, `.xltx`, `.xltm` to PDF or `.xlsx`
@@ -20,6 +21,7 @@ It includes a simple editor for text, data, web, code, script, and config files 
 - Video files `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.wmv`, `.mpeg`, `.mpg` to MP4, MOV, MKV, WEBM, or MP3 audio
 
 PDF conversion extracts readable text. Scanned or image-only PDFs need OCR first.
+EPUB conversion extracts readable chapter text and writes it into a simple PDF.
 Office-to-PDF and legacy Office conversions need Microsoft Office installed on Windows.
 Audio and video conversions need FFmpeg installed and available in `PATH`.
 

@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import argparse
 import html
+import posixpath
 import re
 import zlib
 import zipfile
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from pathlib import Path
+from textwrap import wrap
+from xml.etree import ElementTree
 
 from .converter import ConversionError, ensure_output_path
 
@@ -57,6 +61,49 @@ TEXT_DOCUMENT_EXTENSIONS = (
     ".cmd",
     ".sh",
 )
+
+EPUB_EXTENSIONS = (".epub",)
+
+
+class ReadableHtmlParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style"}:
+            self.skip_depth += 1
+            return
+        if self.skip_depth:
+            return
+        if tag in {"p", "div", "section", "article", "header", "footer", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.parts.append("\n\n")
+        elif tag == "br":
+            self.parts.append("\n")
+        elif tag == "li":
+            self.parts.append("\n- ")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style"} and self.skip_depth:
+            self.skip_depth -= 1
+            return
+        if self.skip_depth:
+            return
+        if tag in {"p", "div", "section", "article", "li", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self.skip_depth and data.strip():
+            self.parts.append(data)
+
+    def text(self) -> str:
+        raw = "".join(self.parts)
+        raw = html.unescape(raw)
+        raw = re.sub(r"[ \t\r\f\v]+", " ", raw)
+        raw = re.sub(r" *\n *", "\n", raw)
+        raw = re.sub(r"\n{3,}", "\n\n", raw)
+        return raw.strip()
 
 
 def docx_content_types_xml() -> str:
@@ -187,6 +234,194 @@ def write_docx(output_path: Path, title: str, paragraphs: list[str]) -> None:
         document.writestr("word/_rels/document.xml.rels", empty_relationships_xml())
         document.writestr("docProps/core.xml", docx_core_properties_xml())
         document.writestr("docProps/app.xml", docx_app_properties_xml())
+
+
+def xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def decode_epub_member(data: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-8", "utf-16", "cp1252"):
+        try:
+            return data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return data.decode("latin-1", errors="replace")
+
+
+def find_epub_rootfile(book: zipfile.ZipFile) -> str:
+    try:
+        container_xml = book.read("META-INF/container.xml")
+    except KeyError as error:
+        raise ConversionError("This EPUB is missing META-INF/container.xml.") from error
+
+    root = ElementTree.fromstring(container_xml)
+    for element in root.iter():
+        if xml_local_name(element.tag) == "rootfile":
+            rootfile = element.attrib.get("full-path")
+            if rootfile:
+                return rootfile
+
+    fallback = next((name for name in book.namelist() if name.lower().endswith(".opf")), None)
+    if fallback:
+        return fallback
+    raise ConversionError("This EPUB does not include a package .opf file.")
+
+
+def epub_spine_documents(book: zipfile.ZipFile, package_path: str) -> list[str]:
+    package_xml = book.read(package_path)
+    package_root = ElementTree.fromstring(package_xml)
+    base_dir = posixpath.dirname(package_path)
+    manifest: dict[str, tuple[str, str]] = {}
+    spine: list[str] = []
+
+    for element in package_root.iter():
+        local = xml_local_name(element.tag)
+        if local == "item":
+            item_id = element.attrib.get("id")
+            href = element.attrib.get("href")
+            media_type = element.attrib.get("media-type", "")
+            if item_id and href:
+                manifest[item_id] = (href, media_type)
+        elif local == "itemref":
+            idref = element.attrib.get("idref")
+            if idref:
+                spine.append(idref)
+
+    def is_readable_document(href: str, media_type: str) -> bool:
+        suffix = Path(href).suffix.lower()
+        return media_type in {"application/xhtml+xml", "text/html"} or suffix in {".xhtml", ".html", ".htm"}
+
+    documents: list[str] = []
+    for idref in spine:
+        item = manifest.get(idref)
+        if not item:
+            continue
+        href, media_type = item
+        if is_readable_document(href, media_type):
+            documents.append(posixpath.normpath(posixpath.join(base_dir, href)))
+
+    if documents:
+        return documents
+
+    for href, media_type in manifest.values():
+        if is_readable_document(href, media_type):
+            documents.append(posixpath.normpath(posixpath.join(base_dir, href)))
+    return documents
+
+
+def html_to_readable_text(value: str) -> str:
+    parser = ReadableHtmlParser()
+    parser.feed(value)
+    return parser.text()
+
+
+def extract_epub_text(epub_path: Path) -> str:
+    try:
+        with zipfile.ZipFile(epub_path) as book:
+            package_path = find_epub_rootfile(book)
+            documents = epub_spine_documents(book, package_path)
+            if not documents:
+                raise ConversionError("No readable chapter documents were found in this EPUB.")
+
+            sections: list[str] = []
+            for document_path in documents:
+                try:
+                    data = book.read(document_path)
+                except KeyError:
+                    continue
+                text = html_to_readable_text(decode_epub_member(data))
+                if text:
+                    sections.append(text)
+    except zipfile.BadZipFile as error:
+        raise ConversionError("This EPUB file could not be opened as a valid EPUB archive.") from error
+
+    text = "\n\n".join(sections).strip()
+    if not text:
+        raise ConversionError("No readable text was found in this EPUB.")
+    return text
+
+
+def escape_pdf_text(value: str) -> bytes:
+    data = value.encode("cp1252", errors="replace")
+    return data.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)")
+
+
+def paginate_text_for_pdf(title: str, text: str) -> list[list[str]]:
+    lines: list[str] = [title, ""]
+    for paragraph in normalize_paragraphs(text):
+        wrapped = wrap(paragraph, width=88, replace_whitespace=False, drop_whitespace=True) or [""]
+        lines.extend(wrapped)
+        lines.append("")
+    if lines[-1:] == [""]:
+        lines.pop()
+
+    page_size = 46
+    return [lines[index : index + page_size] for index in range(0, len(lines), page_size)] or [[title]]
+
+
+def pdf_content_stream(lines: list[str]) -> bytes:
+    stream = [b"BT", b"/F1 11 Tf", b"50 742 Td", b"14 TL"]
+    for line in lines:
+        stream.append(b"(" + escape_pdf_text(line) + b") Tj")
+        stream.append(b"T*")
+    stream.append(b"ET")
+    return b"\n".join(stream)
+
+
+def write_text_pdf(output_path: Path, title: str, text: str) -> None:
+    pages = paginate_text_for_pdf(title, text)
+    objects: list[bytes] = [b"", b"", b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+    page_ids: list[int] = []
+
+    for lines in pages:
+        content = pdf_content_stream(lines)
+        content_id = len(objects) + 1
+        objects.append(b"<< /Length " + str(len(content)).encode("ascii") + b" >>\nstream\n" + content + b"\nendstream")
+        page_id = len(objects) + 1
+        page_ids.append(page_id)
+        objects.append(
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 3 0 R >> >> /Contents "
+            + str(content_id).encode("ascii")
+            + b" 0 R >>"
+        )
+
+    kids = b" ".join(str(page_id).encode("ascii") + b" 0 R" for page_id in page_ids)
+    objects[0] = b"<< /Type /Catalog /Pages 2 0 R >>"
+    objects[1] = b"<< /Type /Pages /Kids [" + kids + b"] /Count " + str(len(page_ids)).encode("ascii") + b" >>"
+
+    pdf = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for object_id, body in enumerate(objects, start=1):
+        offsets.append(len(pdf))
+        pdf.extend(f"{object_id} 0 obj\n".encode("ascii"))
+        pdf.extend(body)
+        pdf.extend(b"\nendobj\n")
+
+    xref_offset = len(pdf)
+    pdf.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        pdf.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    pdf.extend(
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n".encode("ascii")
+    )
+    output_path.write_bytes(bytes(pdf))
+
+
+def convert_epub_to_pdf(
+    epub_path: Path | str,
+    output_path: Path | str | None = None,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    source = Path(epub_path)
+    check_source_file(source, EPUB_EXTENSIONS, "EPUB")
+    destination = Path(output_path) if output_path else source.with_suffix(".pdf")
+    ensure_output_path(destination, overwrite)
+    write_text_pdf(destination, source.stem, extract_epub_text(source))
+    return destination
 
 
 def check_source_file(source: Path, suffixes: tuple[str, ...], label: str) -> None:
@@ -450,9 +685,9 @@ def convert_pdf_to_word(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Convert PDF/TXT files to Word .docx documents.")
-    parser.add_argument("input", type=Path, help="PDF, TXT, or MD file path.")
-    parser.add_argument("-o", "--output", type=Path, help="Output .docx file path.")
+    parser = argparse.ArgumentParser(description="Convert document files.")
+    parser.add_argument("input", type=Path, help="PDF, editable text, or EPUB file path.")
+    parser.add_argument("-o", "--output", type=Path, help="Output file path.")
     parser.add_argument("--encoding", default="utf-8-sig", help="Text-file encoding. Default: utf-8-sig.")
     parser.add_argument("--overwrite", action="store_true", help="Replace existing output files.")
     return parser
@@ -466,15 +701,17 @@ def main(argv: list[str] | None = None) -> int:
         suffix = args.input.suffix.lower()
         if suffix == ".pdf":
             output = convert_pdf_to_word(args.input, args.output, overwrite=args.overwrite)
-        elif suffix in {".txt", ".md"}:
+        elif suffix in TEXT_DOCUMENT_EXTENSIONS:
             output = convert_text_to_word(
                 args.input,
                 args.output,
                 encoding=args.encoding,
                 overwrite=args.overwrite,
             )
+        elif suffix in EPUB_EXTENSIONS:
+            output = convert_epub_to_pdf(args.input, args.output, overwrite=args.overwrite)
         else:
-            raise ConversionError("Supported Word inputs are .pdf, .txt, and .md files.")
+            raise ConversionError("Supported document inputs are .pdf, editable text files, and .epub files.")
         print(f"Created {output}")
         return 0
     except ConversionError as error:
