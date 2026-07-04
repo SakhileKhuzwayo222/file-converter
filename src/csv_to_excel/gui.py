@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from .archive import ZIP_EXTENSIONS, create_zip_archive, extract_zip_archive
 from .converter import (
     ConversionError,
     convert_csv_to_excel,
@@ -113,6 +114,7 @@ class ConversionSpec:
     supports_encoding: bool
     supports_delimiter: bool
     convert: ConverterFunction
+    source_kind: str = "file"
 
     @property
     def name(self) -> str:
@@ -147,6 +149,14 @@ def text_to_word(input_path: Path, output_path: Path | None, encoding: str, deli
 
 def epub_to_pdf(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
     return convert_epub_to_pdf(input_path, output_path, overwrite=overwrite)
+
+
+def zip_to_folder(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return extract_zip_archive(input_path, output_path, overwrite=overwrite)
+
+
+def folder_to_zip(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return create_zip_archive(input_path, output_path, overwrite=overwrite)
 
 
 def word_to_pdf(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
@@ -273,6 +283,31 @@ CONVERSIONS = [
         supports_encoding=False,
         supports_delimiter=False,
         convert=epub_to_pdf,
+    ),
+    ConversionSpec(
+        from_label="ZIP archive (.zip)",
+        to_label="Extracted folder",
+        input_label="ZIP",
+        input_extensions=ZIP_EXTENSIONS,
+        output_extension="",
+        output_description="extracted folder",
+        output_tag="Extracted",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=zip_to_folder,
+    ),
+    ConversionSpec(
+        from_label="Folder",
+        to_label="ZIP Archive (.zip)",
+        input_label="folder",
+        input_extensions=(),
+        output_extension=".zip",
+        output_description="ZIP archive",
+        output_tag="ZIP",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=folder_to_zip,
+        source_kind="folder",
     ),
     ConversionSpec(
         from_label="Editable text files",
@@ -2181,9 +2216,17 @@ function assertAllowedExtension(filename, allowedExtensions) {
         self.update_labels(clear_paths=clear_paths)
 
     def input_type_hint(self) -> str:
+        if not self.spec.input_extensions:
+            return "folder contents"
         if self.spec.input_extensions == TEXT_DOCUMENT_EXTENSIONS:
             return TEXT_EDIT_SUMMARY
         return ", ".join(self.spec.input_extensions)
+
+    def uses_folder_source(self) -> bool:
+        return self.spec.source_kind == "folder"
+
+    def uses_batch_folder_mode(self) -> bool:
+        return self.mode.get() == "folder" and not self.uses_folder_source()
 
     def input_file_phrase(self) -> str:
         label = self.spec.input_label
@@ -2192,7 +2235,13 @@ function assertAllowedExtension(filename, allowedExtensions) {
 
     def update_labels(self, clear_paths: bool = True) -> None:
         spec = self.spec
-        if self.mode.get() == "folder":
+        if self.uses_folder_source():
+            self.mode.set("folder")
+            self.upload_title.configure(text="Add folder")
+            self.upload_hint.configure(text="Open the upload popup to choose a folder to compress into a ZIP archive.")
+            self.rename_output.set(False)
+            self.status.set("Ready for folder upload")
+        elif self.mode.get() == "folder":
             self.upload_title.configure(text=f"Add {spec.input_label} folder")
             self.upload_hint.configure(text=f"Open the upload popup to choose a folder containing {self.input_type_hint()} files.")
             self.rename_output.set(False)
@@ -2222,6 +2271,8 @@ function assertAllowedExtension(filename, allowedExtensions) {
         if path:
             state = "submitted" if self.input_submitted else "selected"
             self.upload_hint.configure(text=f"{state.title()}: {self.display_path(Path(path))}")
+        elif self.uses_folder_source():
+            self.upload_hint.configure(text="Open the upload popup to choose a folder to compress into a ZIP archive.")
         elif self.mode.get() == "folder":
             self.upload_hint.configure(text=f"Open the upload popup to choose a folder containing {self.input_type_hint()} files.")
         else:
@@ -2251,6 +2302,9 @@ function assertAllowedExtension(filename, allowedExtensions) {
             self.suggested_name.set("Suggested output: choose a file first")
             return
         path = Path(input_text)
+        if self.uses_folder_source():
+            self.suggested_name.set(f"Suggested output: {self.default_output_name(path).name}")
+            return
         if self.mode.get() == "folder":
             self.suggested_name.set(f'Folder output: each file will use "Original Name ({self.spec.output_tag}){self.spec.output_extension}"')
             return
@@ -2264,8 +2318,9 @@ function assertAllowedExtension(filename, allowedExtensions) {
     def choose_input(self) -> None:
         if self.is_converting:
             return
-        if self.mode.get() == "folder":
-            path = filedialog.askdirectory(title=f"Choose folder containing {self.spec.input_label} files")
+        if self.mode.get() == "folder" or self.uses_folder_source():
+            title = "Choose folder to zip" if self.uses_folder_source() else f"Choose folder containing {self.spec.input_label} files"
+            path = filedialog.askdirectory(title=title)
         else:
             path = filedialog.askopenfilename(
                 title=f"Choose {self.spec.input_label} file",
@@ -2286,9 +2341,9 @@ function assertAllowedExtension(filename, allowedExtensions) {
             return False
 
         path = Path(path_text)
-        if self.mode.get() == "folder":
+        if self.mode.get() == "folder" or self.uses_folder_source():
             if not path.is_dir():
-                self.show_error("Invalid folder", "Please choose a folder for folder conversion.")
+                self.show_error("Invalid folder", "Please choose a folder.")
                 return False
         else:
             if not path.is_file():
@@ -2332,6 +2387,8 @@ function assertAllowedExtension(filename, allowedExtensions) {
         output_text = self.output_folder.get().strip()
         if output_text:
             return Path(output_text)
+        if source.is_dir() and self.uses_folder_source():
+            return source.parent
         return source if source.is_dir() else source.parent
 
     def output_path_for(self, source: Path) -> Path:
@@ -2410,7 +2467,17 @@ function assertAllowedExtension(filename, allowedExtensions) {
                 raise ConversionError("Conversion cancelled before processing started.")
 
             self.queue_step(1, "Preparing output name and folder")
-            if self.mode.get() == "folder":
+            if self.uses_folder_source():
+                output_path = self.output_path_for(input_path)
+                self.root.after(0, lambda: self.write_log(f"Output file: {output_path}"))
+                self.queue_step(2, f"Reading folder: {input_path.name}")
+                if self.cancel_event.is_set():
+                    raise ConversionError("Conversion cancelled before writing the archive.")
+                self.queue_step(3, f"Creating {self.spec.output_tag}: {output_path.name}")
+                created = self.convert_one(input_path, output_path)
+                message = f"Created:\n{created}"
+                outputs = [created]
+            elif self.mode.get() == "folder":
                 output_directory = self.output_directory_for(input_path)
                 self.root.after(0, lambda: self.write_log(f"Output folder: {output_directory}"))
                 converted = self.convert_folder(input_path, output_directory)

@@ -13,6 +13,8 @@ It includes the FC Text Editor for text, data, web, code, script, and config fil
 - JSON to Excel `.xlsx`
 - PDF to Word `.docx`
 - EPUB to PDF `.pdf`
+- ZIP archive extraction to a folder
+- Folder compression to ZIP `.zip`
 - Editable text/code/data files to Word `.docx`
 - Word files `.doc`, `.docx`, `.docm`, `.dot`, `.dotx`, `.dotm`, `.rtf` to PDF or `.docx`
 - Excel files `.xls`, `.xlsx`, `.xlsm`, `.xlsb`, `.xlt`, `.xltx`, `.xltm` to PDF or `.xlsx`
