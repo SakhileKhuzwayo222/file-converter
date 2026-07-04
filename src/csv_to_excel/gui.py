@@ -483,6 +483,12 @@ class ConverterApp:
         self.cancel_event = threading.Event()
         self.is_converting = False
         self.toast_window: tk.Toplevel | None = None
+        self.upload_popup: tk.Toplevel | None = None
+        self.upload_popup_box: tk.Frame | None = None
+        self.upload_popup_plus: tk.Label | None = None
+        self.upload_popup_title: ttk.Label | None = None
+        self.upload_popup_hint: ttk.Label | None = None
+        self.upload_popup_panels: list[tk.Frame] = []
         self.status_popup: tk.Toplevel | None = None
         self.status_stage_canvas: tk.Canvas | None = None
         self.status_log: tk.Text | None = None
@@ -719,30 +725,30 @@ class ConverterApp:
 
         ttk.Label(upload_section, text="Upload source", style="FieldLabel.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
-        self.upload_box = tk.Frame(upload_section, bd=0, highlightthickness=1, padx=20, pady=20, cursor="hand2")
-        self.upload_box.grid(row=1, column=0, sticky="ew")
-        self.upload_box.columnconfigure(1, weight=1)
-        self.register_background(self.upload_box, "panel_alt")
+        self.upload_summary_box = tk.Frame(upload_section, bd=0, highlightthickness=1, padx=16, pady=14, cursor="hand2")
+        self.upload_summary_box.grid(row=1, column=0, sticky="ew")
+        self.upload_summary_box.columnconfigure(1, weight=1)
+        self.register_background(self.upload_summary_box, "panel_alt")
 
-        self.plus_label = tk.Label(self.upload_box, text="+", font=("Segoe UI", 38, "bold"), cursor="hand2")
-        self.plus_label.grid(row=0, column=0, rowspan=2, padx=(0, 16))
-        self.register_background(self.plus_label, "panel_alt")
+        self.upload_icon_label = tk.Label(self.upload_summary_box, text="+", font=("Segoe UI", 28, "bold"), cursor="hand2")
+        self.upload_icon_label.grid(row=0, column=0, rowspan=2, padx=(0, 14))
+        self.register_background(self.upload_icon_label, "panel_alt")
 
-        self.upload_title = ttk.Label(self.upload_box, text="Add file", style="UploadTitle.TLabel")
+        self.upload_title = ttk.Label(self.upload_summary_box, text="Add file", style="UploadTitle.TLabel")
         self.upload_title.grid(row=0, column=1, sticky="sw")
-        self.upload_hint = ttk.Label(self.upload_box, text="Click the plus box to choose a file.", style="UploadHint.TLabel")
+        self.upload_hint = ttk.Label(self.upload_summary_box, text="Open the upload popup to choose a source file.", style="UploadHint.TLabel")
         self.upload_hint.grid(row=1, column=1, sticky="nw", pady=(4, 0))
 
-        self.submit_row = tk.Frame(upload_section)
-        self.submit_row.grid(row=2, column=0, sticky="ew", pady=(12, 0))
-        self.submit_row.columnconfigure(0, weight=1)
-        self.register_background(self.submit_row, "panel")
+        self.upload_popup_button = ttk.Button(
+            self.upload_summary_box,
+            text="Open Upload",
+            style="Secondary.TButton",
+            command=self.show_upload_popup,
+        )
+        self.upload_popup_button.grid(row=0, column=2, rowspan=2, sticky="e", padx=(16, 0))
 
-        self.submit_button = ttk.Button(self.submit_row, text="Submit", style="Accent.TButton", command=self.submit_input)
-        self.submit_button.grid(row=0, column=0, sticky="w", ipadx=30)
-
-        for widget in (self.upload_box, self.plus_label, self.upload_title, self.upload_hint):
-            widget.bind("<Button-1>", lambda event: self.choose_input())
+        for widget in (self.upload_summary_box, self.upload_icon_label, self.upload_title, self.upload_hint):
+            widget.bind("<Button-1>", lambda event: self.show_upload_popup())
 
     def build_output_card(self) -> None:
         body = self.make_card(2, "Output")
@@ -830,11 +836,11 @@ class ConverterApp:
         self.root.configure(bg=theme.background)
         for widget, role in self.tk_backgrounds:
             widget.configure(bg=getattr(theme, role))
-            if widget in (self.plus_label,):
+            if widget in (self.upload_icon_label,):
                 widget.configure(fg=theme.accent)
         for frame in self.card_frames:
             frame.configure(bg=theme.panel, highlightbackground=theme.border, highlightcolor=theme.border)
-        self.upload_box.configure(highlightbackground=theme.border, highlightcolor=theme.accent)
+        self.upload_summary_box.configure(highlightbackground=theme.border, highlightcolor=theme.accent)
 
         self.style.configure(".", font=("Segoe UI", 10), background=theme.background, foreground=theme.text)
         self.style.configure("Title.TLabel", font=("Segoe UI", 24, "bold"), background=theme.panel, foreground=theme.text)
@@ -897,6 +903,7 @@ class ConverterApp:
 
         self.draw_logo()
         self.theme_button.configure(text="Light mode" if self.theme_name.get() == "dark" else "Dark mode")
+        self.refresh_upload_popup_theme()
         self.refresh_status_popup_theme()
         self.render_timeline()
 
@@ -974,6 +981,153 @@ class ConverterApp:
         self.completed_step_count = completed
         self.current_step_detail = detail
         self.draw_status_stages()
+
+    def show_upload_popup(self) -> None:
+        if self.is_converting:
+            return
+        if self.upload_popup and self.upload_popup.winfo_exists():
+            self.upload_popup.lift()
+            self.upload_popup.focus_force()
+            return
+
+        theme = self.theme
+        popup = tk.Toplevel(self.root)
+        self.upload_popup = popup
+        self.upload_popup_panels = []
+        popup.title("Upload Source")
+        popup.minsize(560, 360)
+        popup.transient(self.root)
+        popup.iconphoto(True, self.window_icon)
+        popup.configure(bg=theme.background)
+        popup.columnconfigure(0, weight=1)
+        popup.rowconfigure(0, weight=1)
+        popup.protocol("WM_DELETE_WINDOW", self.close_upload_popup)
+
+        shell = tk.Frame(popup, bg=theme.background, padx=24, pady=22)
+        shell.grid(row=0, column=0, sticky="nsew")
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(1, weight=1)
+
+        header = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=18, pady=16)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        header.columnconfigure(1, weight=1)
+        self.upload_popup_panels.append(header)
+
+        tk.Label(
+            header,
+            text="UP",
+            bg=theme.accent,
+            fg=theme.accent_text,
+            font=("Segoe UI", 11, "bold"),
+            padx=12,
+            pady=10,
+        ).grid(row=0, column=0, rowspan=2, sticky="nsw", padx=(0, 14))
+        tk.Label(header, text="Upload source", bg=theme.panel, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
+            row=0,
+            column=1,
+            sticky="w",
+        )
+        tk.Label(
+            header,
+            text="Choose the file or folder you want to convert, then submit it.",
+            bg=theme.panel,
+            fg=theme.muted,
+            font=("Segoe UI", 10),
+            wraplength=420,
+            justify="left",
+        ).grid(row=1, column=1, sticky="w", pady=(4, 0))
+
+        body = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=18, pady=18)
+        body.grid(row=1, column=0, sticky="nsew", pady=(0, 14))
+        body.columnconfigure(0, weight=1)
+        self.upload_popup_panels.append(body)
+
+        self.upload_popup_box = tk.Frame(body, bd=0, highlightthickness=1, padx=20, pady=22, cursor="hand2")
+        self.upload_popup_box.grid(row=0, column=0, sticky="ew")
+        self.upload_popup_box.columnconfigure(1, weight=1)
+
+        self.upload_popup_plus = tk.Label(self.upload_popup_box, text="+", font=("Segoe UI", 42, "bold"), cursor="hand2")
+        self.upload_popup_plus.grid(row=0, column=0, rowspan=2, padx=(0, 18))
+
+        self.upload_popup_title = ttk.Label(self.upload_popup_box, text=self.upload_title.cget("text"), style="UploadTitle.TLabel")
+        self.upload_popup_title.grid(row=0, column=1, sticky="sw")
+        self.upload_popup_hint = ttk.Label(self.upload_popup_box, text=self.upload_hint.cget("text"), style="UploadHint.TLabel")
+        self.upload_popup_hint.grid(row=1, column=1, sticky="nw", pady=(4, 0))
+
+        for widget in (self.upload_popup_box, self.upload_popup_plus, self.upload_popup_title, self.upload_popup_hint):
+            widget.bind("<Button-1>", lambda event: self.choose_input())
+
+        button_row = tk.Frame(shell, bg=theme.background)
+        button_row.grid(row=2, column=0, sticky="ew")
+        button_row.columnconfigure(0, weight=1)
+        ttk.Button(button_row, text="Cancel", style="Ghost.TButton", command=self.close_upload_popup).grid(
+            row=0,
+            column=1,
+            sticky="e",
+            padx=(0, 10),
+        )
+        ttk.Button(button_row, text="Submit Upload", style="Accent.TButton", command=self.submit_input_from_popup).grid(
+            row=0,
+            column=2,
+            sticky="e",
+        )
+
+        self.refresh_upload_popup_theme()
+        self.refresh_upload_popup_text()
+        self.center_popup(popup, 560, 360)
+        popup.focus_force()
+
+    def close_upload_popup(self) -> None:
+        if self.upload_popup and self.upload_popup.winfo_exists():
+            self.upload_popup.destroy()
+        self.upload_popup = None
+        self.upload_popup_box = None
+        self.upload_popup_plus = None
+        self.upload_popup_title = None
+        self.upload_popup_hint = None
+        self.upload_popup_panels = []
+
+    def submit_input_from_popup(self) -> None:
+        if self.submit_input():
+            self.close_upload_popup()
+
+    def refresh_upload_popup_text(self) -> None:
+        if not self.upload_popup or not self.upload_popup.winfo_exists():
+            return
+        if self.upload_popup_title and self.upload_popup_title.winfo_exists():
+            self.upload_popup_title.configure(text=self.upload_title.cget("text"))
+        if self.upload_popup_hint and self.upload_popup_hint.winfo_exists():
+            self.upload_popup_hint.configure(text=self.upload_hint.cget("text"))
+
+    def refresh_upload_popup_theme(self) -> None:
+        if not self.upload_popup or not self.upload_popup.winfo_exists():
+            return
+
+        theme = self.theme
+        self.upload_popup.configure(bg=theme.background)
+        children = self.upload_popup.winfo_children()
+        if children and isinstance(children[0], tk.Frame):
+            shell = children[0]
+            shell.configure(bg=theme.background)
+            for child in shell.winfo_children():
+                if isinstance(child, tk.Frame) and child not in self.upload_popup_panels:
+                    child.configure(bg=theme.background)
+        for panel in self.upload_popup_panels:
+            panel.configure(bg=theme.panel, highlightbackground=theme.border, highlightcolor=theme.border)
+            for child in panel.winfo_children():
+                if isinstance(child, tk.Label):
+                    if child.cget("text") == "UP":
+                        child.configure(bg=theme.accent, fg=theme.accent_text)
+                    elif child.cget("text") == "Choose the file or folder you want to convert, then submit it.":
+                        child.configure(bg=theme.panel, fg=theme.muted)
+                    else:
+                        child.configure(bg=theme.panel, fg=theme.text)
+                elif isinstance(child, tk.Frame):
+                    child.configure(bg=theme.panel_alt, highlightbackground=theme.border, highlightcolor=theme.accent)
+        if self.upload_popup_box and self.upload_popup_box.winfo_exists():
+            self.upload_popup_box.configure(bg=theme.panel_alt, highlightbackground=theme.border, highlightcolor=theme.accent)
+        if self.upload_popup_plus and self.upload_popup_plus.winfo_exists():
+            self.upload_popup_plus.configure(bg=theme.panel_alt, fg=theme.accent)
 
     def show_status_popup(self) -> None:
         if self.status_popup and self.status_popup.winfo_exists():
@@ -1299,12 +1453,12 @@ class ConverterApp:
         spec = self.spec
         if self.mode.get() == "folder":
             self.upload_title.configure(text=f"Add {spec.input_label} folder")
-            self.upload_hint.configure(text=f"Click the plus box to choose a folder containing {', '.join(spec.input_extensions)} files.")
+            self.upload_hint.configure(text=f"Open the upload popup to choose a folder containing {', '.join(spec.input_extensions)} files.")
             self.rename_output.set(False)
             self.status.set("Ready for folder upload")
         else:
             self.upload_title.configure(text=f"Add {spec.input_label} file")
-            self.upload_hint.configure(text=f"Click the plus box to choose a {spec.input_label} file.")
+            self.upload_hint.configure(text=f"Open the upload popup to choose a {spec.input_label} file.")
             self.status.set("Ready")
 
         encoding_state = "normal" if spec.supports_encoding else "disabled"
@@ -1326,9 +1480,10 @@ class ConverterApp:
             state = "submitted" if self.input_submitted else "selected"
             self.upload_hint.configure(text=f"{state.title()}: {self.display_path(Path(path))}")
         elif self.mode.get() == "folder":
-            self.upload_hint.configure(text=f"Click the plus box to choose a folder containing {', '.join(self.spec.input_extensions)} files.")
+            self.upload_hint.configure(text=f"Open the upload popup to choose a folder containing {', '.join(self.spec.input_extensions)} files.")
         else:
-            self.upload_hint.configure(text=f"Click the plus box to choose a {self.spec.input_label} file.")
+            self.upload_hint.configure(text=f"Open the upload popup to choose a {self.spec.input_label} file.")
+        self.refresh_upload_popup_text()
         self.update_suggested_name()
 
     def display_path(self, path: Path, max_length: int = 92) -> str:
@@ -1378,27 +1533,27 @@ class ConverterApp:
             self.set_progress(5, "Upload selected")
             self.render_timeline()
             self.update_upload_display()
-            self.show_toast("Upload selected", "Click Submit to confirm this input before converting.")
+            self.show_toast("Upload selected", "Click Submit Upload in the popup to confirm this input.")
 
-    def submit_input(self) -> None:
+    def submit_input(self) -> bool:
         path_text = self.input_path.get().strip()
         if not path_text:
-            messagebox.showerror("Missing upload", "Click the plus box and choose a file or folder first.")
-            return
+            messagebox.showerror("Missing upload", "Open the upload popup and choose a file or folder first.")
+            return False
 
         path = Path(path_text)
         if self.mode.get() == "folder":
             if not path.is_dir():
                 messagebox.showerror("Invalid folder", "Please choose a folder for folder conversion.")
-                return
+                return False
         else:
             if not path.is_file():
                 messagebox.showerror("Invalid file", "Please choose a file for single-file conversion.")
-                return
+                return False
             if path.suffix.lower() not in self.spec.input_extensions:
                 expected = ", ".join(self.spec.input_extensions)
                 messagebox.showerror("Wrong file type", f"Please choose one of these file types: {expected}")
-                return
+                return False
 
         self.input_submitted = True
         self.status.set("Upload submitted")
@@ -1407,6 +1562,7 @@ class ConverterApp:
         self.render_timeline(active_index=None, completed=1, detail=f"Submitted {path.name}")
         self.write_log(f"Submitted upload: {path}")
         self.show_toast("Upload submitted", "Your input is ready. Choose a save folder or convert with the default location.")
+        return True
 
     def choose_output_folder(self) -> None:
         path = filedialog.askdirectory(title="Choose output folder")
@@ -1444,7 +1600,7 @@ class ConverterApp:
 
     def start_conversion(self) -> None:
         if not self.input_submitted:
-            messagebox.showerror("Submit upload", "Choose a file or folder with the plus box, then click Submit first.")
+            messagebox.showerror("Submit upload", "Open the upload popup, choose a file or folder, then click Submit Upload first.")
             return
 
         self.cancel_event.clear()
