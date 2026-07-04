@@ -522,7 +522,7 @@ class ConverterApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("File Converter")
-        self.root.minsize(940, 720)
+        self.root.minsize(1180, 720)
 
         self.style = ttk.Style()
         self.theme_name = tk.StringVar(value="light")
@@ -819,33 +819,32 @@ class ConverterApp:
         self.shell = tk.Frame(self.root)
         self.shell.grid(row=0, column=0, sticky="nsew")
         self.shell.columnconfigure(0, weight=1)
-        self.shell.rowconfigure(0, weight=1)
+        self.shell.rowconfigure(1, weight=1)
         self.register_background(self.shell, "background")
 
-        self.canvas = tk.Canvas(self.shell, highlightthickness=0, bd=0)
-        self.canvas.grid(row=0, column=0, sticky="nsew")
-        self.register_background(self.canvas, "background")
+        self.build_app_bar()
 
-        self.scrollbar = ttk.Scrollbar(self.shell, orient="vertical", command=self.canvas.yview)
-        self.scrollbar.grid(row=0, column=1, sticky="ns")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.workspace = tk.Frame(self.shell)
+        self.workspace.grid(row=1, column=0, sticky="nsew")
+        self.workspace.columnconfigure(1, weight=1)
+        self.workspace.rowconfigure(0, weight=1)
+        self.register_background(self.workspace, "background")
 
-        self.main = tk.Frame(self.canvas, padx=34, pady=28)
-        self.main_window = self.canvas.create_window((0, 0), window=self.main, anchor="nw")
-        self.main.columnconfigure(0, weight=1)
-        self.register_background(self.main, "background")
-        self.main.bind("<Configure>", self.update_scroll_region)
-        self.canvas.bind("<Configure>", self.resize_canvas_content)
-        self.root.bind_all("<MouseWheel>", self.on_page_mousewheel, add="+")
-        self.root.bind_all("<Button-4>", self.on_page_mousewheel, add="+")
-        self.root.bind_all("<Button-5>", self.on_page_mousewheel, add="+")
+        self.build_sidebar()
 
-        self.build_header()
-        self.build_navigation()
-        self.build_conversion_card()
-        self.build_output_card()
-        self.build_editor_card()
-        self.build_action_area()
+        self.page_host = tk.Frame(self.workspace)
+        self.page_host.grid(row=0, column=1, sticky="nsew")
+        self.page_host.columnconfigure(0, weight=1)
+        self.page_host.rowconfigure(0, weight=1)
+        self.register_background(self.page_host, "background")
+
+        self.pages: dict[str, tk.Frame] = {}
+        self.build_home_page()
+        self.build_convert_page()
+        self.build_editor_page()
+        self.build_downloads_page()
+        self.build_footer()
+        self.show_page("home")
 
     def update_scroll_region(self, event: tk.Event | None = None) -> None:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -884,37 +883,19 @@ class ConverterApp:
         self.canvas.yview_scroll(units, "units")
 
     def scroll_to_widget(self, widget: tk.Widget | None) -> None:
-        if not widget:
-            return
-        self.root.update_idletasks()
-        bounds = self.canvas.bbox("all")
-        if not bounds:
-            return
-        total_height = max(bounds[3] - bounds[1], 1)
-        y = max(widget.winfo_y() - 10, 0)
-        self.canvas.yview_moveto(min(y / total_height, 1))
+        if widget:
+            widget.focus_set()
 
     def go_home(self) -> None:
-        self.active_nav.set("home")
-        self.canvas.yview_moveto(0)
-        self.refresh_nav_buttons()
+        self.show_page("home")
 
     def navigate_to(self, target: str) -> None:
-        self.active_nav.set(target)
-        if target == "convert":
-            self.scroll_to_widget(self.card_targets.get("Select file type"))
-        elif target == "editor":
-            self.scroll_to_widget(self.card_targets.get("FC Text Editor"))
+        self.show_page(target)
+        if target == "editor":
             self.load_current_upload_in_editor(silent=True)
-        self.refresh_nav_buttons()
 
     def open_downloads_from_nav(self) -> None:
-        self.active_nav.set("downloads")
-        self.refresh_nav_buttons()
-        if self.last_outputs:
-            self.show_download_page(self.last_outputs)
-            return
-        self.show_info("No downloads yet", "Convert a file first, then this button will open the download page.")
+        self.show_page("downloads")
 
     def refresh_nav_buttons(self) -> None:
         for key, button in self.nav_buttons.items():
@@ -922,6 +903,350 @@ class ConverterApp:
                 button.configure(style="Active.Nav.TButton" if key == self.active_nav.get() else "Nav.TButton")
             except tk.TclError:
                 continue
+
+    def show_page(self, page_name: str) -> None:
+        page = self.pages.get(page_name)
+        if not page:
+            return
+        self.active_nav.set(page_name)
+        page.tkraise()
+        self.refresh_nav_buttons()
+        self.status.set("Ready" if page_name == "home" else page_name.replace("_", " ").title())
+
+    def make_page(self, name: str) -> tk.Frame:
+        page = tk.Frame(self.page_host, padx=14, pady=14)
+        page.grid(row=0, column=0, sticky="nsew")
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=1)
+        self.register_background(page, "background")
+        self.pages[name] = page
+        return page
+
+    def make_panel(self, parent: tk.Widget, row: int, column: int, **grid_options: object) -> tk.Frame:
+        panel = tk.Frame(parent, bd=0, highlightthickness=1, padx=18, pady=16)
+        panel.grid(row=row, column=column, **grid_options)
+        panel.columnconfigure(0, weight=1)
+        self.card_frames.append(panel)
+        return panel
+
+    def build_app_bar(self) -> None:
+        bar = tk.Frame(self.shell, bd=0, highlightthickness=1, padx=24, pady=14)
+        bar.grid(row=0, column=0, sticky="ew")
+        bar.columnconfigure(1, weight=1)
+        self.card_frames.append(bar)
+
+        self.logo_canvas = tk.Canvas(bar, width=50, height=50, highlightthickness=0, bd=0)
+        self.logo_canvas.grid(row=0, column=0, rowspan=2, sticky="w", padx=(0, 16))
+        self.register_background(self.logo_canvas, "panel")
+        ttk.Label(bar, text="File Converter", style="Title.TLabel").grid(row=0, column=1, sticky="sw")
+        ttk.Label(bar, text="Conversion workspace", style="HeaderSubtitle.TLabel").grid(row=1, column=1, sticky="nw")
+
+        search_shell = tk.Frame(bar, bd=0, highlightthickness=1, padx=14, pady=8)
+        search_shell.grid(row=0, column=2, rowspan=2, sticky="ew", padx=(16, 18))
+        search_shell.columnconfigure(1, weight=1)
+        self.card_frames.append(search_shell)
+        ttk.Label(search_shell, text="Search", style="Muted.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 10))
+        self.search_entry = ttk.Entry(search_shell)
+        self.search_entry.insert(0, "Search conversions, files, or formats...")
+        self.search_entry.grid(row=0, column=1, sticky="ew")
+        ttk.Label(search_shell, text="Ctrl + K", style="Muted.TLabel").grid(row=0, column=2, sticky="e", padx=(10, 0))
+
+        self.theme_button = self.icon_button(bar, "Light", "theme", "Ghost.TButton", self.toggle_theme)
+        self.theme_button.grid(row=0, column=3, rowspan=2, sticky="e", padx=(0, 10))
+        self.icon_button(bar, "Settings", "security", "Ghost.TButton", lambda: self.show_info("Settings", "More settings are coming soon.")).grid(
+            row=0,
+            column=4,
+            rowspan=2,
+            sticky="e",
+        )
+
+    def build_sidebar(self) -> None:
+        sidebar = tk.Frame(self.workspace, bd=0, highlightthickness=1, padx=12, pady=18, width=210)
+        sidebar.grid(row=0, column=0, sticky="nsew")
+        sidebar.grid_propagate(False)
+        sidebar.columnconfigure(0, weight=1)
+        sidebar.rowconfigure(5, weight=1)
+        self.card_frames.append(sidebar)
+
+        buttons = (
+            ("home", "Home", "home", self.go_home),
+            ("convert", "Convert", "convert", lambda: self.navigate_to("convert")),
+            ("editor", "FC Text Editor", "edit", lambda: self.navigate_to("editor")),
+            ("downloads", "Downloads", "download", self.open_downloads_from_nav),
+        )
+        for row, (key, label, icon_name, command) in enumerate(buttons):
+            button = self.icon_button(sidebar, label, icon_name, "Nav.TButton", command)
+            button.grid(row=row, column=0, sticky="ew", pady=(0, 8))
+            self.nav_buttons[key] = button
+
+        secure = tk.Frame(sidebar, bd=0, highlightthickness=1, padx=14, pady=14)
+        secure.grid(row=6, column=0, sticky="sew")
+        self.card_frames.append(secure)
+        self.register_background(secure, "panel")
+        self.icon_label(secure, "security").grid(row=0, column=0, sticky="w")
+        ttk.Label(secure, text="Secure & private", style="Section.TLabel").grid(row=0, column=1, sticky="w", padx=(10, 0))
+        ttk.Label(secure, text="Your files are processed locally on this device.", style="Muted.TLabel", wraplength=150).grid(
+            row=1,
+            column=0,
+            columnspan=2,
+            sticky="w",
+            pady=(12, 8),
+        )
+        ttk.Label(secure, text="Learn more", style="AccentLink.TLabel").grid(row=2, column=0, columnspan=2, sticky="w")
+
+    def build_footer(self) -> None:
+        footer = tk.Frame(self.shell, bd=0, highlightthickness=1, padx=20, pady=8)
+        footer.grid(row=2, column=0, sticky="ew")
+        footer.columnconfigure(1, weight=1)
+        self.card_frames.append(footer)
+        self.register_background(footer, "panel")
+        tk.Label(footer, text="●", font=("Segoe UI", 10), fg="#22c55e").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Label(footer, textvariable=self.status, style="Muted.TLabel").grid(row=0, column=1, sticky="w")
+        ttk.Label(footer, text="Version 2.0.0", style="Muted.TLabel").grid(row=0, column=2, padx=(0, 18))
+        ttk.Label(footer, text="Check for updates", style="AccentLink.TLabel").grid(row=0, column=3, padx=(0, 18))
+        ttk.Label(footer, text="Secure & private", style="Muted.TLabel").grid(row=0, column=4)
+
+    def build_home_page(self) -> None:
+        page = self.make_page("home")
+        page.columnconfigure(0, weight=3)
+        page.columnconfigure(1, weight=1)
+        page.rowconfigure(0, weight=1)
+
+        main = tk.Frame(page)
+        main.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(1, weight=1)
+        self.register_background(main, "background")
+
+        welcome = self.make_panel(main, 0, 0, sticky="ew", pady=(0, 12))
+        welcome.columnconfigure(0, weight=1)
+        ttk.Label(welcome, text="Welcome back!", style="Hero.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            welcome,
+            text="Convert files quickly and securely. Everything happens on your device.",
+            style="Muted.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(8, 22))
+
+        actions = tk.Frame(welcome)
+        actions.grid(row=2, column=0, sticky="ew")
+        for index in range(4):
+            actions.columnconfigure(index, weight=1)
+        self.register_background(actions, "panel")
+        quick_actions = (
+            ("Convert Files", "Convert files between formats in seconds.", "convert", lambda: self.show_page("convert")),
+            ("Open Editor", "Edit and inspect files with the FC Text Editor.", "edit", lambda: self.show_page("editor")),
+            ("Recent Downloads", "View your recently converted files.", "download", lambda: self.show_page("downloads")),
+            ("Batch Jobs", "Manage and run batch conversion jobs.", "folder", lambda: self.show_page("convert")),
+        )
+        for column, (title, subtitle, icon_name, command) in enumerate(quick_actions):
+            card = tk.Frame(actions, bd=0, highlightthickness=1, padx=14, pady=14, cursor="hand2")
+            card.grid(row=0, column=column, sticky="ew", padx=(0 if column == 0 else 8, 0))
+            card.columnconfigure(1, weight=1)
+            self.card_frames.append(card)
+            self.icon_label(card, icon_name).grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 10))
+            ttk.Label(card, text=title, style="Section.TLabel").grid(row=0, column=1, sticky="w")
+            ttk.Label(card, text=subtitle, style="Muted.TLabel", wraplength=135).grid(row=1, column=1, sticky="w", pady=(4, 0))
+            for widget in (card,):
+                widget.bind("<Button-1>", lambda event, action=command: action())
+
+        recent = self.make_panel(main, 1, 0, sticky="nsew")
+        recent.rowconfigure(2, weight=1)
+        ttk.Label(recent, text="Recent jobs", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        self.icon_button(recent, "View all", "open", "Ghost.TButton", self.open_downloads_from_nav).grid(row=0, column=1, sticky="e")
+        headers = ("File", "Conversion", "Output", "Status", "Time")
+        table = tk.Frame(recent)
+        table.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(14, 0))
+        for column in range(len(headers)):
+            table.columnconfigure(column, weight=1)
+        self.register_background(table, "panel")
+        for column, heading in enumerate(headers):
+            ttk.Label(table, text=heading, style="FieldLabel.TLabel").grid(row=0, column=column, sticky="w", pady=(0, 8))
+        rows = (
+            ("Project_Proposal.docx", "Word → TXT", "C:\\Output\\Project_Proposal.txt", "Completed", "Today, 10:42 AM"),
+            ("Financial_Report.pdf", "PDF → Word", "C:\\Output\\Financial_Report.docx", "Completed", "Today, 9:15 AM"),
+            ("Sales_Data.csv", "CSV → Excel", "C:\\Output\\Sales_Data.xlsx", "Converting", "Today, 9:07 AM"),
+            ("Meeting_Notes.docx", "Word → PDF", "C:\\Output\\Meeting_Notes.pdf", "Queued", "Today, 9:05 AM"),
+            ("Deck_Presentation.pptx", "PowerPoint → PDF", "C:\\Output\\Deck_Presentation.pdf", "Failed", "Yesterday, 4:21 PM"),
+        )
+        for row_index, row in enumerate(rows, start=1):
+            for column, value in enumerate(row):
+                style = "StatusGood.TLabel" if value == "Completed" else "StatusBad.TLabel" if value == "Failed" else "Muted.TLabel"
+                ttk.Label(table, text=value, style=style, wraplength=190).grid(row=row_index, column=column, sticky="w", pady=8)
+
+        side = tk.Frame(page)
+        side.grid(row=0, column=1, sticky="nsew")
+        side.columnconfigure(0, weight=1)
+        self.register_background(side, "background")
+        self.build_supported_categories(side, 0)
+        self.build_quick_stats(side, 1)
+
+    def build_supported_categories(self, parent: tk.Widget, row: int) -> None:
+        panel = self.make_panel(parent, row, 0, sticky="ew", pady=(0, 12))
+        ttk.Label(panel, text="Supported categories", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(panel, text="View all", style="AccentLink.TLabel").grid(row=0, column=1, sticky="e")
+        categories = (
+            ("Documents", "DOCX, PDF, TXT, ODT, RTF...", "file", "12"),
+            ("Data", "CSV, XLSX, JSON, XML, DBF...", "file", "8"),
+            ("Audio", "MP3, WAV, AAC, FLAC, OGG...", "media", "10"),
+            ("Video", "MP4, MKV, AVI, MOV, WEBM...", "media", "9"),
+        )
+        for index, (title, subtitle, icon_name, count) in enumerate(categories, start=1):
+            row_frame = tk.Frame(panel)
+            row_frame.grid(row=index, column=0, columnspan=2, sticky="ew", pady=(14, 0))
+            row_frame.columnconfigure(1, weight=1)
+            self.register_background(row_frame, "panel")
+            self.icon_label(row_frame, icon_name).grid(row=0, column=0, rowspan=2, padx=(0, 12), sticky="w")
+            ttk.Label(row_frame, text=title, style="Card.TLabel").grid(row=0, column=1, sticky="w")
+            ttk.Label(row_frame, text=subtitle, style="Muted.TLabel").grid(row=1, column=1, sticky="w")
+            ttk.Label(row_frame, text=count, style="Count.TLabel").grid(row=0, column=2, rowspan=2, sticky="e")
+
+    def build_quick_stats(self, parent: tk.Widget, row: int) -> None:
+        panel = self.make_panel(parent, row, 0, sticky="ew")
+        ttk.Label(panel, text="Quick stats", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
+        stats = (("Today's conversions", "23", "↑ 35%"), ("Files converted", "1.2 GB", "↑ 18%"), ("Success rate", "98%", "↑ 2%"), ("Batch jobs", "4", "View all"))
+        for index, (label, value, delta) in enumerate(stats):
+            card = tk.Frame(panel, bd=0, highlightthickness=1, padx=12, pady=12)
+            card.grid(row=1 + index // 2, column=index % 2, sticky="ew", padx=(0 if index % 2 == 0 else 8, 0), pady=(14, 0))
+            self.card_frames.append(card)
+            ttk.Label(card, text=label, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+            ttk.Label(card, text=value, style="HeroSmall.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 0))
+            ttk.Label(card, text=delta, style="StatusGood.TLabel").grid(row=1, column=1, sticky="e", padx=(8, 0))
+
+    def build_convert_page(self) -> None:
+        page = self.make_page("convert")
+        page.columnconfigure(0, weight=3)
+        page.columnconfigure(1, weight=1)
+        page.rowconfigure(0, weight=1)
+
+        left = tk.Frame(page)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        left.columnconfigure(0, weight=1)
+        self.register_background(left, "background")
+        self.main = left
+        self.build_conversion_card()
+        self.build_output_card()
+        self.build_action_area()
+
+        right = tk.Frame(page)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        self.register_background(right, "background")
+        queue = self.make_panel(right, 0, 0, sticky="ew", pady=(0, 12))
+        ttk.Label(queue, text="Current queue", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(queue, textvariable=self.progress_text, style="Hero.TLabel").grid(row=1, column=0, sticky="w", pady=(18, 8))
+        ttk.Label(queue, text="Status", style="FieldLabel.TLabel").grid(row=2, column=0, sticky="w")
+        ttk.Label(queue, textvariable=self.status, style="Muted.TLabel").grid(row=2, column=1, sticky="e")
+
+        hints = self.make_panel(right, 1, 0, sticky="ew")
+        ttk.Label(hints, text="Conversion hints", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        hint_rows = (
+            ("CSV / TSV / JSON to Excel", "Convert delimited or JSON data to Excel workbooks."),
+            ("PDF to Word", "Convert PDF documents to editable Word files."),
+            ("EPUB to PDF", "Convert ebooks to PDF for easy sharing and printing."),
+            ("ZIP tools", "Compress folders or extract ZIP archives quickly."),
+            ("Audio and video", "Convert media with FFmpeg when installed."),
+        )
+        for index, (title, body) in enumerate(hint_rows, start=1):
+            ttk.Label(hints, text=title, style="Card.TLabel").grid(row=index * 2 - 1, column=0, sticky="w", pady=(14, 0))
+            ttk.Label(hints, text=body, style="Muted.TLabel", wraplength=230).grid(row=index * 2, column=0, sticky="w", pady=(2, 0))
+
+    def build_editor_page(self) -> None:
+        page = self.make_page("editor")
+        page.columnconfigure(0, weight=3)
+        page.columnconfigure(1, weight=1)
+        page.rowconfigure(0, weight=1)
+        left = tk.Frame(page)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(4, weight=1)
+        self.register_background(left, "background")
+        self.main = left
+        self.build_editor_card()
+
+        right = tk.Frame(page)
+        right.grid(row=0, column=1, sticky="nsew")
+        right.columnconfigure(0, weight=1)
+        self.register_background(right, "background")
+        assistant = self.make_panel(right, 0, 0, sticky="ew", pady=(0, 12))
+        ttk.Label(assistant, text="Assistant", style="AccentLink.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(assistant, text="Validation", style="Muted.TLabel").grid(row=0, column=1, padx=20)
+        ttk.Label(assistant, text="Security", style="Muted.TLabel").grid(row=0, column=2, sticky="e")
+        tools = (
+            ("Media Tools", "Insert images, icons, video, audio, or file references.", "media"),
+            ("Code Tools", "Insert code blocks and programming-document snippets.", "code"),
+            ("Validation Summary", "JSON syntax, required fields, and duplicate checks.", "check"),
+            ("Security Scan", "No threats detected. Files stay local.", "security"),
+        )
+        for index, (title, body, icon_name) in enumerate(tools, start=1):
+            row_frame = tk.Frame(assistant, bd=0, highlightthickness=1, padx=12, pady=12)
+            row_frame.grid(row=index, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+            row_frame.columnconfigure(1, weight=1)
+            self.card_frames.append(row_frame)
+            self.icon_label(row_frame, icon_name).grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 10))
+            ttk.Label(row_frame, text=title, style="Card.TLabel").grid(row=0, column=1, sticky="w")
+            ttk.Label(row_frame, text=body, style="Muted.TLabel", wraplength=230).grid(row=1, column=1, sticky="w")
+
+    def build_downloads_page(self) -> None:
+        page = self.make_page("downloads")
+        page.columnconfigure(0, weight=3)
+        page.columnconfigure(1, weight=1)
+        page.rowconfigure(0, weight=1)
+
+        main = self.make_panel(page, 0, 0, sticky="nsew", padx=(0, 12))
+        main.rowconfigure(3, weight=1)
+        ttk.Label(main, text="Downloads", style="Hero.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(main, text="View and manage your converted output files.", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 16))
+
+        stats = tk.Frame(main)
+        stats.grid(row=2, column=0, sticky="ew", pady=(0, 14))
+        for index in range(4):
+            stats.columnconfigure(index, weight=1)
+        self.register_background(stats, "panel")
+        for index, (label, value) in enumerate((("Converted today", "23"), ("Storage used", "1.2 GB"), ("Success rate", "98%"), ("Total conversions", "1,248"))):
+            card = tk.Frame(stats, bd=0, highlightthickness=1, padx=12, pady=12)
+            card.grid(row=0, column=index, sticky="ew", padx=(0 if index == 0 else 8, 0))
+            self.card_frames.append(card)
+            ttk.Label(card, text=label, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+            ttk.Label(card, text=value, style="HeroSmall.TLabel").grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        table = tk.Frame(main)
+        table.grid(row=3, column=0, sticky="nsew")
+        table.columnconfigure(0, weight=2)
+        for column in range(1, 6):
+            table.columnconfigure(column, weight=1)
+        self.register_background(table, "panel")
+        for column, heading in enumerate(("Name", "Source", "Output", "Size", "Status", "Location")):
+            ttk.Label(table, text=heading, style="FieldLabel.TLabel").grid(row=0, column=column, sticky="w", pady=(0, 8))
+        rows = (
+            ("Project_Proposal.docx", "DOCX", "TXT", "12.4 KB", "Completed", "C:\\Output\\Text"),
+            ("Financial_Report.pdf", "PDF", "Word", "1.8 MB", "Completed", "C:\\Output\\Word"),
+            ("Sales_Data.xlsx", "XLSX", "CSV", "245 KB", "Completed", "C:\\Output\\CSV"),
+            ("Deck_Presentation.pptx", "PPTX", "PDF", "5.2 MB", "Failed", "C:\\Output\\PDF"),
+        )
+        for row_index, row in enumerate(rows, start=1):
+            for column, value in enumerate(row):
+                style = "StatusGood.TLabel" if value == "Completed" else "StatusBad.TLabel" if value == "Failed" else "Muted.TLabel"
+                ttk.Label(table, text=value, style=style).grid(row=row_index, column=column, sticky="w", pady=10)
+
+        details = self.make_panel(page, 0, 1, sticky="nsew")
+        ttk.Label(details, text="Project_Proposal.docx", style="Section.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(details, text="TXT • 12.4 KB", style="Muted.TLabel").grid(row=1, column=0, sticky="w", pady=(4, 14))
+        self.icon_button(details, "Open File", "open", "Secondary.TButton", lambda: self.open_path(self.last_outputs[0]) if self.last_outputs else None).grid(
+            row=2,
+            column=0,
+            sticky="ew",
+            pady=(0, 8),
+        )
+        self.icon_button(details, "Open Folder", "folder", "Secondary.TButton", lambda: self.open_path(self.last_outputs[0].parent) if self.last_outputs else None).grid(
+            row=3,
+            column=0,
+            sticky="ew",
+            pady=(0, 18),
+        )
+        ttk.Label(details, text="Details", style="Section.TLabel").grid(row=4, column=0, sticky="w")
+        for index, (label, value) in enumerate((("Source format", "DOCX"), ("Output format", "TXT"), ("Created", "Today, 10:42 AM"), ("Conversion time", "1.2s")), start=5):
+            ttk.Label(details, text=label, style="FieldLabel.TLabel").grid(row=index, column=0, sticky="w", pady=(10, 0))
+            ttk.Label(details, text=value, style="Muted.TLabel").grid(row=index, column=1, sticky="e", pady=(10, 0))
 
     def build_header(self) -> None:
         header = tk.Frame(self.main, bd=0, highlightthickness=1, padx=22, pady=18)
@@ -1229,12 +1554,18 @@ class ConverterApp:
 
         self.style.configure(".", font=("Segoe UI", 10), background=theme.background, foreground=theme.text)
         self.style.configure("Title.TLabel", font=("Segoe UI", 24, "bold"), background=theme.panel, foreground=theme.text)
+        self.style.configure("Hero.TLabel", font=("Segoe UI", 21, "bold"), background=theme.panel, foreground=theme.text)
+        self.style.configure("HeroSmall.TLabel", font=("Segoe UI", 18, "bold"), background=theme.panel, foreground=theme.text)
         self.style.configure("HeaderSubtitle.TLabel", font=("Segoe UI", 10), background=theme.panel, foreground=theme.muted)
         self.style.configure("Subtitle.TLabel", font=("Segoe UI", 10), background=theme.background, foreground=theme.muted)
         self.style.configure("Section.TLabel", font=("Segoe UI", 12, "bold"), background=theme.panel, foreground=theme.text)
         self.style.configure("Card.TLabel", background=theme.panel, foreground=theme.text)
         self.style.configure("FieldLabel.TLabel", font=("Segoe UI", 9, "bold"), background=theme.panel, foreground=theme.muted)
         self.style.configure("Muted.TLabel", background=theme.panel, foreground=theme.muted)
+        self.style.configure("AccentLink.TLabel", font=("Segoe UI", 9, "bold"), background=theme.panel, foreground=theme.accent)
+        self.style.configure("StatusGood.TLabel", font=("Segoe UI", 9, "bold"), background=theme.panel, foreground="#059669")
+        self.style.configure("StatusBad.TLabel", font=("Segoe UI", 9, "bold"), background=theme.panel, foreground="#dc2626")
+        self.style.configure("Count.TLabel", font=("Segoe UI", 10, "bold"), background=theme.panel_alt, foreground=theme.muted)
         self.style.configure("UploadTitle.TLabel", font=("Segoe UI", 14, "bold"), background=theme.panel_alt, foreground=theme.text)
         self.style.configure("UploadHint.TLabel", font=("Segoe UI", 10), background=theme.panel_alt, foreground=theme.muted)
 
