@@ -50,6 +50,18 @@ class OfficeConverterTests(unittest.TestCase):
             self.assertIn("First paragraph.", text)
             self.assertIn("Second paragraph.", text)
 
+    def test_convert_editable_data_to_word_creates_docx(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            text_path = temp_dir / "settings.json"
+            text_path.write_text('{"project": "File Converter"}', encoding="utf-8")
+
+            output_path = convert_text_to_word(text_path)
+
+            text = docx_text(output_path)
+            self.assertIn("settings", text)
+            self.assertIn("File Converter", text)
+
     def test_convert_pdf_to_word_extracts_text(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temp_dir = Path(directory)

@@ -26,12 +26,21 @@ from .external import (
     convert_powerpoint_with_office,
     convert_word_with_office,
 )
-from .office import convert_pdf_to_word, convert_text_to_word
+from .office import TEXT_DOCUMENT_EXTENSIONS, convert_pdf_to_word, convert_text_to_word
 
 
 ConverterFunction = Callable[[Path, Path | None, str, str | None, bool], Path]
 INVALID_FILENAME_CHARS = '<>:"/\\|?*'
-TEXT_EDIT_EXTENSIONS = (".txt", ".md", ".csv", ".tsv", ".json")
+EDITABLE_FORMAT_GROUPS = (
+    ("Text documents", (".txt", ".text", ".md", ".markdown", ".rst", ".log")),
+    ("Data files", (".csv", ".tsv", ".json", ".jsonl", ".xml", ".yaml", ".yml", ".toml")),
+    ("Config files", (".ini", ".cfg", ".conf", ".properties")),
+    ("Web files", (".html", ".htm", ".css", ".js", ".ts", ".jsx", ".tsx")),
+    ("Code and scripts", (".py", ".java", ".cs", ".c", ".cpp", ".h", ".hpp", ".php", ".rb", ".go", ".rs")),
+    ("Shell and query files", (".swift", ".kt", ".kts", ".sql", ".ps1", ".bat", ".cmd", ".sh")),
+)
+TEXT_EDIT_EXTENSIONS = TEXT_DOCUMENT_EXTENSIONS
+TEXT_EDIT_SUMMARY = "text, Markdown, data, web, code, script, and config files"
 
 
 @dataclass(frozen=True)
@@ -249,10 +258,10 @@ CONVERSIONS = [
         convert=pdf_to_word,
     ),
     ConversionSpec(
-        from_label="Text or Markdown (.txt, .md)",
+        from_label="Editable text files",
         to_label="Word Document (.docx)",
-        input_label="text",
-        input_extensions=(".txt", ".md"),
+        input_label="editable text",
+        input_extensions=TEXT_DOCUMENT_EXTENSIONS,
         output_extension=".docx",
         output_description="Word document",
         output_tag="Word",
@@ -494,6 +503,7 @@ class ConverterApp:
         self.editor_popup: tk.Toplevel | None = None
         self.editor_text: tk.Text | None = None
         self.editor_path: Path | None = None
+        self.editor_encoding_used = "utf-8-sig"
         self.status_popup: tk.Toplevel | None = None
         self.status_stage_canvas: tk.Canvas | None = None
         self.status_progress: ttk.Progressbar | None = None
@@ -800,11 +810,17 @@ class ConverterApp:
         body.columnconfigure(0, weight=1)
 
         ttk.Label(body, textvariable=self.editor_status, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
-        ttk.Button(body, text="Open Editor", style="Secondary.TButton", command=self.show_editor_popup).grid(
+        ttk.Button(body, text="Choose File", style="Secondary.TButton", command=self.choose_editor_file).grid(
             row=0,
             column=1,
             sticky="e",
             padx=(14, 0),
+        )
+        ttk.Button(body, text="Open Editor", style="Accent.TButton", command=self.show_editor_popup).grid(
+            row=0,
+            column=2,
+            sticky="e",
+            padx=(10, 0),
         )
 
     def build_action_area(self) -> None:
@@ -979,6 +995,39 @@ class ConverterApp:
         self.current_step_detail = detail
         self.draw_status_stages()
 
+    def editable_filetypes(self) -> list[tuple[str, str]]:
+        filetypes = [(label, " ".join(f"*{extension}" for extension in extensions)) for label, extensions in EDITABLE_FORMAT_GROUPS]
+        all_patterns = " ".join(f"*{extension}" for extension in TEXT_EDIT_EXTENSIONS)
+        return [("All editable files", all_patterns), *filetypes, ("All files", "*.*")]
+
+    def can_edit_extension(self, path: Path) -> bool:
+        return path.suffix.lower() in TEXT_EDIT_EXTENSIONS
+
+    def read_editable_text(self, path: Path) -> str:
+        encodings = (self.encoding.get().strip() or "utf-8-sig", "utf-8-sig", "utf-8", "utf-16", "cp1252", "latin-1")
+        seen: set[str] = set()
+        last_error: UnicodeDecodeError | None = None
+        for encoding in encodings:
+            if encoding in seen:
+                continue
+            seen.add(encoding)
+            try:
+                content = path.read_text(encoding=encoding)
+            except UnicodeDecodeError as error:
+                last_error = error
+                continue
+            self.editor_encoding_used = encoding
+            return content
+        if last_error:
+            raise last_error
+        return path.read_text(encoding="utf-8-sig")
+
+    def matching_conversion_for_extension(self, extension: str) -> ConversionSpec | None:
+        for conversion in CONVERSIONS:
+            if extension in conversion.input_extensions:
+                return conversion
+        return None
+
     def editable_source_path(self) -> Path | None:
         if self.mode.get() == "folder":
             return None
@@ -986,34 +1035,64 @@ class ConverterApp:
         if not path_text:
             return None
         path = Path(path_text)
-        if path.suffix.lower() not in TEXT_EDIT_EXTENSIONS:
+        if not self.can_edit_extension(path):
             return None
         return path
 
     def update_editor_status(self) -> None:
         path_text = self.input_path.get().strip()
         if self.mode.get() == "folder":
-            self.editor_status.set("Editor available for single text/data files")
+            self.editor_status.set("Editor available for single editable files")
         elif not path_text:
             self.editor_status.set("Choose an editable source file")
         else:
             path = Path(path_text)
-            if path.suffix.lower() in TEXT_EDIT_EXTENSIONS:
+            if self.can_edit_extension(path):
                 self.editor_status.set(f"Editable source: {path.name}")
             else:
                 self.editor_status.set(f"Editor not available for {path.suffix.lower() or 'this file'} files")
 
+    def choose_editor_file(self) -> None:
+        if self.is_converting:
+            return
+        path_text = filedialog.askopenfilename(
+            title="Choose editable file",
+            filetypes=self.editable_filetypes(),
+        )
+        if not path_text:
+            return
+
+        path = Path(path_text)
+        if not self.can_edit_extension(path):
+            self.show_error("Editor unavailable", f"The editor supports {TEXT_EDIT_SUMMARY}.")
+            return
+
+        matching_conversion = self.matching_conversion_for_extension(path.suffix.lower())
+        if matching_conversion:
+            self.mode.set("file")
+            self.from_format.set(matching_conversion.from_label)
+            self.to_format.set(matching_conversion.to_label)
+            self.update_target_choices(clear_paths=False)
+
+        self.input_path.set(path_text)
+        self.input_submitted = False
+        self.status.set("Editable file selected")
+        self.set_progress(5, "Editable file selected")
+        self.render_timeline()
+        self.update_upload_display()
+        self.show_editor_popup()
+
     def show_editor_popup(self) -> None:
         source = self.editable_source_path()
         if not source:
-            self.show_error("Editor unavailable", "The editor supports single .txt, .md, .csv, .tsv, and .json files.")
+            self.show_error("Editor unavailable", f"The editor supports single {TEXT_EDIT_SUMMARY}.")
             return
         if not source.is_file():
             self.show_error("Missing source", f"This source file no longer exists:\n{source}")
             return
 
         try:
-            content = source.read_text(encoding=self.encoding.get().strip() or "utf-8-sig")
+            content = self.read_editable_text(source)
         except UnicodeDecodeError as error:
             self.show_error("Could not read file", f"This file could not be opened as editable text:\n{error}")
             return
@@ -1137,7 +1216,7 @@ class ConverterApp:
             return
         try:
             content = self.editor_text.get("1.0", "end-1c")
-            self.editor_path.write_text(content, encoding=self.encoding.get().strip() or "utf-8-sig")
+            self.editor_path.write_text(content, encoding=self.editor_encoding_used)
         except OSError as error:
             self.show_error("Could not save file", f"Windows could not save this file:\n{self.editor_path}\n\n{error}")
             return

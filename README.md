@@ -4,7 +4,7 @@ A small Windows-friendly Python project for converting files into Microsoft Offi
 
 The app includes a custom File Converter icon, a modern interface, and a Light/Dark theme toggle.
 It also shows interaction popups, a step-by-step conversion timeline, a determinate progress bar, and a download-ready screen when conversion finishes.
-It includes a simple editor for text/data files before conversion.
+It includes a simple editor for text, data, web, code, script, and config files before conversion.
 
 ## What It Converts
 
@@ -12,7 +12,7 @@ It includes a simple editor for text/data files before conversion.
 - TSV to Excel `.xlsx`
 - JSON to Excel `.xlsx`
 - PDF to Word `.docx`
-- TXT or Markdown to Word `.docx`
+- Editable text/code/data files to Word `.docx`
 - Word files `.doc`, `.docx`, `.docm`, `.dot`, `.dotx`, `.dotm`, `.rtf` to PDF or `.docx`
 - Excel files `.xls`, `.xlsx`, `.xlsm`, `.xlsb`, `.xlt`, `.xltx`, `.xltm` to PDF or `.xlsx`
 - PowerPoint files `.ppt`, `.pptx`, `.pptm`, `.pps`, `.ppsx`, `.ppsm`, `.pot`, `.potx`, `.potm` to PDF or `.pptx`
@@ -48,7 +48,7 @@ Then:
 2. Choose a single file or a folder of files.
 3. Click the plus box under the file type selection, then click **Submit**.
 4. Choose a save folder.
-5. For `.txt`, `.md`, `.csv`, `.tsv`, or `.json`, use **Open Editor** if you want to edit before converting.
+5. For editable text, data, web, code, script, or config files, use **Choose File** or **Open Editor** if you want to edit before converting.
 6. Choose whether to rename the output file.
 7. Click **Convert**.
 8. When conversion completes, use the **Download Ready** window to open the file, open its folder, or start another conversion.

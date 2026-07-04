@@ -11,6 +11,54 @@ from pathlib import Path
 from .converter import ConversionError, ensure_output_path
 
 
+TEXT_DOCUMENT_EXTENSIONS = (
+    ".txt",
+    ".text",
+    ".md",
+    ".markdown",
+    ".rst",
+    ".log",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".jsonl",
+    ".xml",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".properties",
+    ".html",
+    ".htm",
+    ".css",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".py",
+    ".java",
+    ".cs",
+    ".c",
+    ".cpp",
+    ".h",
+    ".hpp",
+    ".php",
+    ".rb",
+    ".go",
+    ".rs",
+    ".swift",
+    ".kt",
+    ".kts",
+    ".sql",
+    ".ps1",
+    ".bat",
+    ".cmd",
+    ".sh",
+)
+
+
 def docx_content_types_xml() -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -170,7 +218,7 @@ def convert_text_to_word(
     overwrite: bool = False,
 ) -> Path:
     source = Path(text_path)
-    check_source_file(source, (".txt", ".md"), "text")
+    check_source_file(source, TEXT_DOCUMENT_EXTENSIONS, "editable text")
     destination = Path(output_path) if output_path else source.with_suffix(".docx")
     ensure_output_path(destination, overwrite)
 
