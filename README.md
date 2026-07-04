@@ -2,9 +2,9 @@
 
 A small Windows-friendly Python project for converting files into Microsoft Office formats.
 
-The app includes a custom File Converter icon, icon-led controls, a modern interface, and a Light/Dark theme toggle.
+The app includes a custom File Converter icon, icon-led controls, home-screen navigation, a modern interface, and a Light/Dark theme toggle.
 It also shows interaction popups, a step-by-step conversion timeline, a determinate progress bar, and a download-ready screen when conversion finishes.
-It includes a simple editor for text, data, web, code, script, and config files before conversion.
+It includes the FC Text Editor for text, data, web, code, script, and config files before conversion.
 
 ## What It Converts
 
@@ -50,12 +50,14 @@ Then:
 2. Choose a single file or a folder of files.
 3. Click the plus box under the file type selection, then click **Submit**.
 4. Choose a save folder.
-5. For editable text, data, web, code, script, or config files, use **Choose File** or **Open Editor** if you want to edit before converting.
+5. Use **FC Text Editor** in the navigation to edit the current upload, or choose another editable file.
 6. Choose whether to rename the output file.
 7. Click **Convert**.
 8. When conversion completes, use the **Download Ready** window to open the file, open its folder, or start another conversion.
 
 Use the theme button in the top-right corner to switch between Light and Dark mode.
+The editor toolbar can insert linked media references, code blocks, validation snippets, and security snippets into editable text-based files.
+Binary files such as PDFs, Office files, and media files are converted by the converter, but they are not rewritten directly inside the text editor.
 
 The default output name uses the original filename and adds the output type, for example:
 

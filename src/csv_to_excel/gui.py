@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import os
 import threading
 import tkinter as tk
@@ -490,6 +491,7 @@ class ConverterApp:
 
         self.style = ttk.Style()
         self.theme_name = tk.StringVar(value="light")
+        self.active_nav = tk.StringVar(value="home")
         self.from_format = tk.StringVar(value=CONVERSIONS[0].from_label)
         self.to_format = tk.StringVar(value=CONVERSIONS[0].to_label)
         self.mode = tk.StringVar(value="file")
@@ -542,6 +544,8 @@ class ConverterApp:
 
         self.tk_backgrounds: list[tuple[tk.Widget, str]] = []
         self.card_frames: list[tk.Frame] = []
+        self.card_targets: dict[str, tk.Frame] = {}
+        self.nav_buttons: dict[str, ttk.Button] = {}
         self.window_icon = self.create_window_icon()
         self.root.iconphoto(True, self.window_icon)
         self.ui_icons = self.create_ui_icons()
@@ -687,6 +691,39 @@ class ConverterApp:
         rect(download, ink, 3, 14, 15, 16)
         icons["download"] = download
 
+        home = new_icon()
+        rect(home, ink, 8, 2, 10, 4)
+        rect(home, ink, 6, 4, 12, 6)
+        rect(home, ink, 4, 6, 14, 8)
+        rect(home, ink, 3, 8, 15, 10)
+        rect(home, ink, 5, 10, 13, 16)
+        rect(home, theme.background, 8, 12, 10, 16)
+        icons["home"] = home
+
+        media = new_icon()
+        rect(media, ink, 3, 4, 15, 14)
+        rect(media, theme.background, 5, 6, 13, 12)
+        rect(media, ink, 7, 7, 12, 10)
+        rect(media, ink, 5, 11, 14, 13)
+        icons["media"] = media
+
+        code = new_icon()
+        rect(code, ink, 4, 5, 6, 7)
+        rect(code, ink, 3, 7, 5, 9)
+        rect(code, ink, 4, 9, 6, 11)
+        rect(code, ink, 12, 5, 14, 7)
+        rect(code, ink, 13, 7, 15, 9)
+        rect(code, ink, 12, 9, 14, 11)
+        rect(code, ink, 8, 4, 10, 14)
+        icons["code"] = code
+
+        security = new_icon()
+        rect(security, ink, 5, 3, 13, 5)
+        rect(security, ink, 4, 5, 14, 10)
+        rect(security, ink, 6, 10, 12, 15)
+        rect(security, theme.background, 8, 7, 10, 11)
+        icons["security"] = security
+
         return icons
 
     def register_background(self, widget: tk.Widget, role: str) -> None:
@@ -769,6 +806,7 @@ class ConverterApp:
         self.root.bind_all("<Button-5>", self.on_page_mousewheel, add="+")
 
         self.build_header()
+        self.build_navigation()
         self.build_conversion_card()
         self.build_output_card()
         self.build_editor_card()
@@ -810,6 +848,46 @@ class ConverterApp:
                 units = -1 if delta > 0 else 1
         self.canvas.yview_scroll(units, "units")
 
+    def scroll_to_widget(self, widget: tk.Widget | None) -> None:
+        if not widget:
+            return
+        self.root.update_idletasks()
+        bounds = self.canvas.bbox("all")
+        if not bounds:
+            return
+        total_height = max(bounds[3] - bounds[1], 1)
+        y = max(widget.winfo_y() - 10, 0)
+        self.canvas.yview_moveto(min(y / total_height, 1))
+
+    def go_home(self) -> None:
+        self.active_nav.set("home")
+        self.canvas.yview_moveto(0)
+        self.refresh_nav_buttons()
+
+    def navigate_to(self, target: str) -> None:
+        self.active_nav.set(target)
+        if target == "convert":
+            self.scroll_to_widget(self.card_targets.get("Select file type"))
+        elif target == "editor":
+            self.scroll_to_widget(self.card_targets.get("FC Text Editor"))
+            self.load_current_upload_in_editor(silent=True)
+        self.refresh_nav_buttons()
+
+    def open_downloads_from_nav(self) -> None:
+        self.active_nav.set("downloads")
+        self.refresh_nav_buttons()
+        if self.last_outputs:
+            self.show_download_page(self.last_outputs)
+            return
+        self.show_info("No downloads yet", "Convert a file first, then this button will open the download page.")
+
+    def refresh_nav_buttons(self) -> None:
+        for key, button in self.nav_buttons.items():
+            try:
+                button.configure(style="Active.Nav.TButton" if key == self.active_nav.get() else "Nav.TButton")
+            except tk.TclError:
+                continue
+
     def build_header(self) -> None:
         header = tk.Frame(self.main, bd=0, highlightthickness=1, padx=22, pady=18)
         header.grid(row=0, column=0, sticky="ew", pady=(0, 18))
@@ -829,11 +907,31 @@ class ConverterApp:
         self.theme_button = self.icon_button(header, "Dark mode", "theme", "Ghost.TButton", self.toggle_theme)
         self.theme_button.grid(row=0, column=2, rowspan=2, sticky="e")
 
+    def build_navigation(self) -> None:
+        nav = tk.Frame(self.main, bd=0, highlightthickness=1, padx=18, pady=12)
+        nav.grid(row=1, column=0, sticky="ew", pady=(0, 16))
+        nav.columnconfigure(5, weight=1)
+        self.card_frames.append(nav)
+        self.register_background(nav, "panel")
+
+        ttk.Label(nav, text="Navigate", style="FieldLabel.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12))
+        buttons = (
+            ("home", "Home", "home", self.go_home),
+            ("convert", "Convert", "convert", lambda: self.navigate_to("convert")),
+            ("editor", "FC Text Editor", "edit", lambda: self.navigate_to("editor")),
+            ("downloads", "Downloads", "download", self.open_downloads_from_nav),
+        )
+        for column, (key, label, icon_name, command) in enumerate(buttons, start=1):
+            button = self.icon_button(nav, label, icon_name, "Nav.TButton", command)
+            button.grid(row=0, column=column, sticky="w", padx=(0, 8))
+            self.nav_buttons[key] = button
+
     def make_card(self, row: int, title: str, icon_name: str = "file") -> tk.Frame:
         card = tk.Frame(self.main, bd=0, highlightthickness=1)
         card.grid(row=row, column=0, sticky="ew", pady=(0, 16))
         card.columnconfigure(0, weight=1)
         self.card_frames.append(card)
+        self.card_targets[title] = card
 
         title_row = tk.Frame(card)
         title_row.grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 10))
@@ -849,7 +947,7 @@ class ConverterApp:
         return body
 
     def build_conversion_card(self) -> None:
-        body = self.make_card(1, "Select file type", "convert")
+        body = self.make_card(2, "Select file type", "convert")
         body.columnconfigure(0, weight=1)
 
         selector_row = tk.Frame(body)
@@ -943,7 +1041,7 @@ class ConverterApp:
             widget.bind("<Button-1>", lambda event: self.show_upload_popup())
 
     def build_output_card(self) -> None:
-        body = self.make_card(2, "Output", "folder")
+        body = self.make_card(3, "Output", "folder")
 
         ttk.Label(body, text="Save folder", style="Card.TLabel").grid(row=0, column=0, sticky="w", padx=(0, 12), pady=(0, 10))
         self.output_entry = ttk.Entry(body, textvariable=self.output_folder)
@@ -982,26 +1080,88 @@ class ConverterApp:
         self.suggested_label.grid(row=3, column=1, columnspan=2, sticky="w", pady=(8, 0))
 
     def build_editor_card(self) -> None:
-        body = self.make_card(3, "File Editor", "edit")
+        body = self.make_card(4, "FC Text Editor", "edit")
         body.columnconfigure(0, weight=1)
+        body.rowconfigure(2, weight=1)
 
-        ttk.Label(body, textvariable=self.editor_status, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
-        self.icon_button(body, "Choose File", "folder", "Secondary.TButton", self.choose_editor_file).grid(
+        ttk.Label(body, textvariable=self.editor_status, style="Muted.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 10))
+
+        toolbar = tk.Frame(body)
+        toolbar.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        toolbar.columnconfigure(8, weight=1)
+        self.register_background(toolbar, "panel")
+
+        self.icon_button(toolbar, "Load Upload", "upload", "Secondary.TButton", self.load_current_upload_in_editor).grid(
+            row=0,
+            column=0,
+            sticky="w",
+            padx=(0, 8),
+        )
+        self.icon_button(toolbar, "Choose File", "folder", "Secondary.TButton", self.choose_editor_file).grid(
             row=0,
             column=1,
-            sticky="e",
-            padx=(14, 0),
+            sticky="w",
+            padx=(0, 8),
         )
-        self.icon_button(body, "Open Editor", "edit", "Accent.TButton", self.show_editor_popup).grid(
+        self.icon_button(toolbar, "Save", "save", "Accent.TButton", self.save_editor_file).grid(
             row=0,
             column=2,
-            sticky="e",
-            padx=(10, 0),
+            sticky="w",
+            padx=(0, 8),
+        )
+        self.icon_button(toolbar, "Media", "media", "Secondary.TButton", self.insert_media_reference).grid(
+            row=0,
+            column=3,
+            sticky="w",
+            padx=(0, 8),
+        )
+        self.icon_button(toolbar, "Code", "code", "Secondary.TButton", self.insert_code_block).grid(
+            row=0,
+            column=4,
+            sticky="w",
+            padx=(0, 8),
+        )
+        self.icon_button(toolbar, "Validation", "check", "Secondary.TButton", self.insert_validation_snippet).grid(
+            row=0,
+            column=5,
+            sticky="w",
+            padx=(0, 8),
+        )
+        self.icon_button(toolbar, "Security", "security", "Secondary.TButton", self.insert_security_snippet).grid(
+            row=0,
+            column=6,
+            sticky="w",
+        )
+
+        editor_frame = tk.Frame(body, bd=0, highlightthickness=1, padx=0, pady=0)
+        editor_frame.grid(row=2, column=0, sticky="nsew")
+        editor_frame.columnconfigure(0, weight=1)
+        editor_frame.rowconfigure(0, weight=1)
+        self.register_background(editor_frame, "panel")
+        self.card_frames.append(editor_frame)
+
+        self.editor_text = tk.Text(editor_frame, wrap="none", bd=0, padx=14, pady=14, undo=True, height=16)
+        self.editor_text.grid(row=0, column=0, sticky="nsew")
+        editor_y = ttk.Scrollbar(editor_frame, orient="vertical", command=self.editor_text.yview)
+        editor_y.grid(row=0, column=1, sticky="ns")
+        editor_x = ttk.Scrollbar(editor_frame, orient="horizontal", command=self.editor_text.xview)
+        editor_x.grid(row=1, column=0, sticky="ew")
+        self.editor_text.configure(yscrollcommand=editor_y.set, xscrollcommand=editor_x.set)
+
+        ttk.Label(
+            body,
+            text="Use Media for linked images/audio/video in editable files. Use Code, Validation, or Security to insert programming snippets.",
+            style="Muted.TLabel",
+        ).grid(
+            row=3,
+            column=0,
+            sticky="w",
+            pady=(10, 0),
         )
 
     def build_action_area(self) -> None:
         action_row = tk.Frame(self.main, bd=0, highlightthickness=1, padx=20, pady=18)
-        action_row.grid(row=4, column=0, sticky="ew", pady=(0, 16))
+        action_row.grid(row=5, column=0, sticky="ew", pady=(0, 16))
         action_row.columnconfigure(0, weight=1)
         self.card_frames.append(action_row)
 
@@ -1079,6 +1239,7 @@ class ConverterApp:
 
         self.configure_button_styles()
         self.refresh_icon_widgets()
+        self.refresh_nav_buttons()
         self.style.configure("Card.TRadiobutton", background=theme.panel, foreground=theme.text)
         self.style.map("Card.TRadiobutton", background=[("active", theme.panel)], foreground=[("active", theme.text)])
         self.style.configure("Card.TCheckbutton", background=theme.panel, foreground=theme.text)
@@ -1144,6 +1305,22 @@ class ConverterApp:
             padding=(14, 10),
         )
         self.style.map("Ghost.TButton", background=[("active", theme.panel_alt)])
+        self.style.configure(
+            "Nav.TButton",
+            background=theme.panel,
+            foreground=theme.text,
+            bordercolor=theme.border,
+            padding=(12, 9),
+        )
+        self.style.map("Nav.TButton", background=[("active", theme.panel_alt)])
+        self.style.configure(
+            "Active.Nav.TButton",
+            background=theme.panel_alt,
+            foreground=theme.text,
+            bordercolor=theme.accent,
+            padding=(12, 9),
+        )
+        self.style.map("Active.Nav.TButton", background=[("active", theme.selection)])
 
     def draw_logo(self) -> None:
         theme = self.theme
@@ -1259,12 +1436,22 @@ class ConverterApp:
         self.set_progress(5, "Editable file selected")
         self.render_timeline()
         self.update_upload_display()
-        self.show_editor_popup()
+        self.load_editor_file(path)
+        self.active_nav.set("editor")
+        self.refresh_nav_buttons()
+        self.scroll_to_widget(self.card_targets.get("FC Text Editor"))
 
-    def show_editor_popup(self) -> None:
+    def load_current_upload_in_editor(self, silent: bool = False) -> None:
         source = self.editable_source_path()
         if not source:
-            self.show_error("Editor unavailable", f"The editor supports single {TEXT_EDIT_SUMMARY}.")
+            if not silent:
+                self.show_error("Editor unavailable", f"Choose a single editable upload first. The editor supports {TEXT_EDIT_SUMMARY}.")
+            return
+        self.load_editor_file(source)
+
+    def load_editor_file(self, source: Path) -> None:
+        if not self.can_edit_extension(source):
+            self.show_error("Editor unavailable", f"The FC Text Editor supports {TEXT_EDIT_SUMMARY}.")
             return
         if not source.is_file():
             self.show_error("Missing source", f"This source file no longer exists:\n{source}")
@@ -1279,95 +1466,185 @@ class ConverterApp:
             self.show_error("Could not read file", f"Windows could not open this file:\n{source}\n\n{error}")
             return
 
-        if self.editor_popup and self.editor_popup.winfo_exists():
-            self.editor_popup.lift()
-            self.editor_popup.focus_force()
-            if self.editor_text and self.editor_text.winfo_exists():
-                self.editor_text.delete("1.0", "end")
-                self.editor_text.insert("1.0", content)
-            self.editor_path = source
-            return
-
-        theme = self.theme
-        popup = tk.Toplevel(self.root)
-        self.editor_popup = popup
+        if self.editor_text and self.editor_text.winfo_exists():
+            self.editor_text.delete("1.0", "end")
+            self.editor_text.insert("1.0", content)
+            self.editor_text.edit_modified(False)
+            self.editor_text.focus_set()
         self.editor_path = source
-        popup.title("File Editor")
-        popup.minsize(760, 560)
-        popup.transient(self.root)
-        popup.iconphoto(True, self.window_icon)
-        popup.configure(bg=theme.background)
-        popup.columnconfigure(0, weight=1)
-        popup.rowconfigure(0, weight=1)
-        popup.protocol("WM_DELETE_WINDOW", self.close_editor_popup)
+        self.editor_status.set(f"FC Text Editor: {source.name}")
+        self.status.set(f"Editing {source.name}")
 
-        shell = tk.Frame(popup, bg=theme.background, padx=24, pady=22)
-        shell.grid(row=0, column=0, sticky="nsew")
-        shell.columnconfigure(0, weight=1)
-        shell.rowconfigure(1, weight=1)
+    def editor_suffix(self) -> str:
+        return self.editor_path.suffix.lower() if self.editor_path else ".txt"
 
-        header = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=18, pady=16)
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
-        header.columnconfigure(1, weight=1)
-        tk.Label(
-            header,
-            text="ED",
-            bg=theme.accent,
-            fg=theme.accent_text,
-            font=("Segoe UI", 11, "bold"),
-            padx=12,
-            pady=10,
-        ).grid(row=0, column=0, rowspan=2, sticky="nsw", padx=(0, 14))
-        tk.Label(header, text="File Editor", bg=theme.panel, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
-            row=0,
-            column=1,
-            sticky="w",
+    def insert_at_cursor(self, value: str) -> None:
+        if not self.editor_text or not self.editor_text.winfo_exists():
+            return
+        self.editor_text.insert("insert", value)
+        self.editor_text.focus_set()
+        self.editor_text.edit_modified(True)
+
+    def relative_media_reference(self, media_path: Path) -> str:
+        if self.editor_path:
+            try:
+                return media_path.resolve().relative_to(self.editor_path.parent.resolve()).as_posix()
+            except ValueError:
+                pass
+        return media_path.as_posix()
+
+    def media_markup_for(self, media_path: Path) -> str:
+        suffix = media_path.suffix.lower()
+        reference = self.relative_media_reference(media_path)
+        name = media_path.stem.replace('"', "'") or "media"
+        editor_suffix = self.editor_suffix()
+        video_types = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
+        audio_types = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".wma"}
+        image_types = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp"}
+
+        if editor_suffix in {".html", ".htm"}:
+            if suffix in video_types:
+                return f'\n<video controls src="{reference}"></video>\n'
+            if suffix in audio_types:
+                return f'\n<audio controls src="{reference}"></audio>\n'
+            if suffix in image_types:
+                return f'\n<img src="{reference}" alt="{name}">\n'
+            return f'\n<a href="{reference}">{media_path.name}</a>\n'
+        if editor_suffix in {".md", ".markdown"}:
+            if suffix in image_types:
+                return f"\n![{name}]({reference})\n"
+            if suffix in video_types:
+                return f'\n<video controls src="{reference}"></video>\n'
+            if suffix in audio_types:
+                return f'\n<audio controls src="{reference}"></audio>\n'
+            return f"\n[{media_path.name}]({reference})\n"
+        return f"\n[media: {media_path.name}]\npath={reference}\n"
+
+    def insert_media_reference(self) -> None:
+        if not self.editor_text:
+            return
+        path_text = filedialog.askopenfilename(
+            title="Choose media to reference",
+            filetypes=[
+                ("Media files", "*.png *.jpg *.jpeg *.gif *.webp *.svg *.mp4 *.webm *.mov *.mkv *.mp3 *.wav *.m4a *.ogg *.pdf"),
+                ("All files", "*.*"),
+            ],
         )
-        tk.Label(header, text=source.name, bg=theme.panel, fg=theme.muted, font=("Segoe UI", 10)).grid(
-            row=1,
-            column=1,
-            sticky="w",
-            pady=(4, 0),
+        if path_text:
+            self.insert_at_cursor(self.media_markup_for(Path(path_text)))
+
+    def wrap_code_for_editor(self, code: str, language: str = "text") -> str:
+        suffix = self.editor_suffix()
+        if suffix in {".md", ".markdown"}:
+            return f"\n```{language}\n{code.rstrip()}\n```\n"
+        if suffix in {".html", ".htm"}:
+            escaped = html.escape(code.rstrip())
+            return f"\n<pre><code>{escaped}</code></pre>\n"
+        return f"\n{code.rstrip()}\n"
+
+    def insert_code_block(self) -> None:
+        snippet = "# Code block\n# Add custom document logic here.\n"
+        self.insert_at_cursor(self.wrap_code_for_editor(snippet, "python"))
+
+    def validation_snippet(self) -> tuple[str, str]:
+        suffix = self.editor_suffix()
+        if suffix == ".py":
+            return (
+                "python",
+                """def validate_required_fields(record, required_fields):
+    missing = [field for field in required_fields if not str(record.get(field, "")).strip()]
+    if missing:
+        raise ValueError(f"Missing required fields: {', '.join(missing)}")
+    return True
+""",
+            )
+        if suffix in {".js", ".ts", ".jsx", ".tsx"}:
+            return (
+                "javascript",
+                """function validateRequiredFields(record, requiredFields) {
+  const missing = requiredFields.filter((field) => !String(record[field] ?? "").trim());
+  if (missing.length) throw new Error(`Missing required fields: ${missing.join(", ")}`);
+  return true;
+}
+""",
+            )
+        return (
+            "text",
+            """Validation rule:
+- Check required fields before conversion or submission.
+- Reject empty, malformed, or unexpected values.
+- Return a clear error message when validation fails.
+""",
         )
 
-        editor_frame = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=14, pady=14)
-        editor_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 14))
-        editor_frame.columnconfigure(0, weight=1)
-        editor_frame.rowconfigure(0, weight=1)
-        self.editor_text = tk.Text(editor_frame, wrap="none", bd=0, padx=12, pady=12, undo=True)
-        self.editor_text.grid(row=0, column=0, sticky="nsew")
-        self.editor_text.insert("1.0", content)
+    def security_snippet(self) -> tuple[str, str]:
+        suffix = self.editor_suffix()
+        if suffix == ".py":
+            return (
+                "python",
+                """from pathlib import Path
 
-        button_row = tk.Frame(shell, bg=theme.background)
-        button_row.grid(row=2, column=0, sticky="ew")
-        button_row.columnconfigure(0, weight=1)
-        self.icon_button(button_row, "Close", "close", "Ghost.TButton", self.close_editor_popup).grid(
-            row=0,
-            column=1,
-            sticky="e",
-            padx=(0, 10),
-        )
-        self.icon_button(button_row, "Save Changes", "save", "Accent.TButton", self.save_editor_file).grid(
-            row=0,
-            column=2,
-            sticky="e",
+def safe_child_path(base_dir, filename):
+    base = Path(base_dir).resolve()
+    target = (base / filename).resolve()
+    if target != base and base not in target.parents:
+        raise ValueError("Blocked unsafe path traversal.")
+    return target
+""",
+            )
+        if suffix in {".js", ".ts", ".jsx", ".tsx"}:
+            return (
+                "javascript",
+                """function sanitizePlainText(value) {
+  return String(value ?? "").replace(/[<>]/g, "").trim();
+}
+
+function assertAllowedExtension(filename, allowedExtensions) {
+  const lower = String(filename).toLowerCase();
+  if (!allowedExtensions.some((extension) => lower.endsWith(extension))) {
+    throw new Error("Blocked unsupported file type.");
+  }
+}
+""",
+            )
+        return (
+            "text",
+            """Security rule:
+- Allow only expected file types.
+- Sanitize user-provided text before saving or rendering.
+- Keep output paths inside the chosen folder.
+- Never run embedded code automatically.
+""",
         )
 
-        self.refresh_editor_popup_theme()
-        self.center_popup(popup, 760, 560)
-        popup.focus_force()
+    def insert_validation_snippet(self) -> None:
+        language, snippet = self.validation_snippet()
+        self.insert_at_cursor(self.wrap_code_for_editor(snippet, language))
+
+    def insert_security_snippet(self) -> None:
+        language, snippet = self.security_snippet()
+        self.insert_at_cursor(self.wrap_code_for_editor(snippet, language))
+
+    def show_editor_popup(self) -> None:
+        self.load_current_upload_in_editor()
 
     def close_editor_popup(self) -> None:
         if self.editor_popup and self.editor_popup.winfo_exists():
             self.editor_popup.destroy()
         self.editor_popup = None
-        self.editor_text = None
-        self.editor_path = None
 
     def refresh_editor_popup_theme(self) -> None:
+        theme = self.theme
+        if self.editor_text and self.editor_text.winfo_exists():
+            self.editor_text.configure(
+                bg=theme.log_background,
+                fg=theme.log_text,
+                insertbackground=theme.log_text,
+                selectbackground=theme.selection,
+                selectforeground=theme.text,
+            )
         if not self.editor_popup or not self.editor_popup.winfo_exists():
             return
-        theme = self.theme
         self.editor_popup.configure(bg=theme.background)
         for child in self.editor_popup.winfo_children():
             if isinstance(child, tk.Frame):
@@ -1381,17 +1658,12 @@ class ConverterApp:
                                     label.configure(bg=theme.accent, fg=theme.accent_text)
                                 else:
                                     label.configure(bg=theme.panel, fg=theme.text)
-        if self.editor_text and self.editor_text.winfo_exists():
-            self.editor_text.configure(
-                bg=theme.log_background,
-                fg=theme.log_text,
-                insertbackground=theme.log_text,
-                selectbackground=theme.selection,
-                selectforeground=theme.text,
-            )
 
     def save_editor_file(self) -> None:
-        if not self.editor_text or not self.editor_path:
+        if not self.editor_text:
+            return
+        if not self.editor_path:
+            self.show_error("Choose a file", "Choose an editable file or load the current upload before saving.")
             return
         try:
             content = self.editor_text.get("1.0", "end-1c")
