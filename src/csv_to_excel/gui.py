@@ -31,6 +31,7 @@ from .office import convert_pdf_to_word, convert_text_to_word
 
 ConverterFunction = Callable[[Path, Path | None, str, str | None, bool], Path]
 INVALID_FILENAME_CHARS = '<>:"/\\|?*'
+TEXT_EDIT_EXTENSIONS = (".txt", ".md", ".csv", ".tsv", ".json")
 
 
 @dataclass(frozen=True)
@@ -478,6 +479,7 @@ class ConverterApp:
         self.status = tk.StringVar(value="Ready")
         self.progress_value = tk.DoubleVar(value=0)
         self.progress_text = tk.StringVar(value="0%")
+        self.editor_status = tk.StringVar(value="Choose an editable source file")
 
         self.input_submitted = False
         self.cancel_event = threading.Event()
@@ -489,8 +491,12 @@ class ConverterApp:
         self.upload_popup_title: ttk.Label | None = None
         self.upload_popup_hint: ttk.Label | None = None
         self.upload_popup_panels: list[tk.Frame] = []
+        self.editor_popup: tk.Toplevel | None = None
+        self.editor_text: tk.Text | None = None
+        self.editor_path: Path | None = None
         self.status_popup: tk.Toplevel | None = None
         self.status_stage_canvas: tk.Canvas | None = None
+        self.status_progress: ttk.Progressbar | None = None
         self.status_log: tk.Text | None = None
         self.status_popup_panels: list[tk.Frame] = []
         self.status_log_lines: list[str] = []
@@ -504,7 +510,7 @@ class ConverterApp:
             "Input submitted",
             "Output name prepared",
             "Source read",
-            "Converted file written",
+            "Conversion engine running",
             "Finished",
         ]
 
@@ -586,7 +592,7 @@ class ConverterApp:
         self.build_header()
         self.build_conversion_card()
         self.build_output_card()
-        self.build_options_card()
+        self.build_editor_card()
         self.build_action_area()
 
     def update_scroll_region(self, event: tk.Event | None = None) -> None:
@@ -789,27 +795,17 @@ class ConverterApp:
         self.suggested_label = ttk.Label(body, textvariable=self.suggested_name, style="Muted.TLabel")
         self.suggested_label.grid(row=3, column=1, columnspan=2, sticky="w", pady=(8, 0))
 
-    def build_options_card(self) -> None:
-        body = self.make_card(3, "Options")
-        body.columnconfigure(3, weight=1)
+    def build_editor_card(self) -> None:
+        body = self.make_card(3, "File Editor")
+        body.columnconfigure(0, weight=1)
 
-        self.encoding_label = ttk.Label(body, text="Encoding", style="Card.TLabel")
-        self.encoding_label.grid(row=0, column=0, sticky="w", padx=(0, 10))
-        self.encoding_entry = ttk.Entry(body, textvariable=self.encoding, width=18)
-        self.encoding_entry.grid(row=0, column=1, sticky="w", padx=(0, 20))
-
-        self.delimiter_label = ttk.Label(body, text="CSV delimiter", style="Card.TLabel")
-        self.delimiter_label.grid(row=0, column=2, sticky="w", padx=(0, 10))
-        self.delimiter_entry = ttk.Entry(body, textvariable=self.delimiter, width=10)
-        self.delimiter_entry.grid(row=0, column=3, sticky="w")
-
-        self.overwrite_check = ttk.Checkbutton(
-            body,
-            text="Overwrite existing output files",
-            variable=self.overwrite,
-            style="Card.TCheckbutton",
+        ttk.Label(body, textvariable=self.editor_status, style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Button(body, text="Open Editor", style="Secondary.TButton", command=self.show_editor_popup).grid(
+            row=0,
+            column=1,
+            sticky="e",
+            padx=(14, 0),
         )
-        self.overwrite_check.grid(row=1, column=0, columnspan=4, sticky="w", pady=(12, 0))
 
     def build_action_area(self) -> None:
         action_row = tk.Frame(self.main, bd=0, highlightthickness=1, padx=20, pady=18)
@@ -903,6 +899,7 @@ class ConverterApp:
 
         self.draw_logo()
         self.theme_button.configure(text="Light mode" if self.theme_name.get() == "dark" else "Dark mode")
+        self.refresh_editor_popup_theme()
         self.refresh_upload_popup_theme()
         self.refresh_status_popup_theme()
         self.render_timeline()
@@ -981,6 +978,174 @@ class ConverterApp:
         self.completed_step_count = completed
         self.current_step_detail = detail
         self.draw_status_stages()
+
+    def editable_source_path(self) -> Path | None:
+        if self.mode.get() == "folder":
+            return None
+        path_text = self.input_path.get().strip()
+        if not path_text:
+            return None
+        path = Path(path_text)
+        if path.suffix.lower() not in TEXT_EDIT_EXTENSIONS:
+            return None
+        return path
+
+    def update_editor_status(self) -> None:
+        path_text = self.input_path.get().strip()
+        if self.mode.get() == "folder":
+            self.editor_status.set("Editor available for single text/data files")
+        elif not path_text:
+            self.editor_status.set("Choose an editable source file")
+        else:
+            path = Path(path_text)
+            if path.suffix.lower() in TEXT_EDIT_EXTENSIONS:
+                self.editor_status.set(f"Editable source: {path.name}")
+            else:
+                self.editor_status.set(f"Editor not available for {path.suffix.lower() or 'this file'} files")
+
+    def show_editor_popup(self) -> None:
+        source = self.editable_source_path()
+        if not source:
+            self.show_error("Editor unavailable", "The editor supports single .txt, .md, .csv, .tsv, and .json files.")
+            return
+        if not source.is_file():
+            self.show_error("Missing source", f"This source file no longer exists:\n{source}")
+            return
+
+        try:
+            content = source.read_text(encoding=self.encoding.get().strip() or "utf-8-sig")
+        except UnicodeDecodeError as error:
+            self.show_error("Could not read file", f"This file could not be opened as editable text:\n{error}")
+            return
+        except OSError as error:
+            self.show_error("Could not read file", f"Windows could not open this file:\n{source}\n\n{error}")
+            return
+
+        if self.editor_popup and self.editor_popup.winfo_exists():
+            self.editor_popup.lift()
+            self.editor_popup.focus_force()
+            if self.editor_text and self.editor_text.winfo_exists():
+                self.editor_text.delete("1.0", "end")
+                self.editor_text.insert("1.0", content)
+            self.editor_path = source
+            return
+
+        theme = self.theme
+        popup = tk.Toplevel(self.root)
+        self.editor_popup = popup
+        self.editor_path = source
+        popup.title("File Editor")
+        popup.minsize(760, 560)
+        popup.transient(self.root)
+        popup.iconphoto(True, self.window_icon)
+        popup.configure(bg=theme.background)
+        popup.columnconfigure(0, weight=1)
+        popup.rowconfigure(0, weight=1)
+        popup.protocol("WM_DELETE_WINDOW", self.close_editor_popup)
+
+        shell = tk.Frame(popup, bg=theme.background, padx=24, pady=22)
+        shell.grid(row=0, column=0, sticky="nsew")
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(1, weight=1)
+
+        header = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=18, pady=16)
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        header.columnconfigure(1, weight=1)
+        tk.Label(
+            header,
+            text="ED",
+            bg=theme.accent,
+            fg=theme.accent_text,
+            font=("Segoe UI", 11, "bold"),
+            padx=12,
+            pady=10,
+        ).grid(row=0, column=0, rowspan=2, sticky="nsw", padx=(0, 14))
+        tk.Label(header, text="File Editor", bg=theme.panel, fg=theme.text, font=("Segoe UI", 18, "bold")).grid(
+            row=0,
+            column=1,
+            sticky="w",
+        )
+        tk.Label(header, text=source.name, bg=theme.panel, fg=theme.muted, font=("Segoe UI", 10)).grid(
+            row=1,
+            column=1,
+            sticky="w",
+            pady=(4, 0),
+        )
+
+        editor_frame = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=14, pady=14)
+        editor_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 14))
+        editor_frame.columnconfigure(0, weight=1)
+        editor_frame.rowconfigure(0, weight=1)
+        self.editor_text = tk.Text(editor_frame, wrap="none", bd=0, padx=12, pady=12, undo=True)
+        self.editor_text.grid(row=0, column=0, sticky="nsew")
+        self.editor_text.insert("1.0", content)
+
+        button_row = tk.Frame(shell, bg=theme.background)
+        button_row.grid(row=2, column=0, sticky="ew")
+        button_row.columnconfigure(0, weight=1)
+        ttk.Button(button_row, text="Close", style="Ghost.TButton", command=self.close_editor_popup).grid(
+            row=0,
+            column=1,
+            sticky="e",
+            padx=(0, 10),
+        )
+        ttk.Button(button_row, text="Save Changes", style="Accent.TButton", command=self.save_editor_file).grid(
+            row=0,
+            column=2,
+            sticky="e",
+        )
+
+        self.refresh_editor_popup_theme()
+        self.center_popup(popup, 760, 560)
+        popup.focus_force()
+
+    def close_editor_popup(self) -> None:
+        if self.editor_popup and self.editor_popup.winfo_exists():
+            self.editor_popup.destroy()
+        self.editor_popup = None
+        self.editor_text = None
+        self.editor_path = None
+
+    def refresh_editor_popup_theme(self) -> None:
+        if not self.editor_popup or not self.editor_popup.winfo_exists():
+            return
+        theme = self.theme
+        self.editor_popup.configure(bg=theme.background)
+        for child in self.editor_popup.winfo_children():
+            if isinstance(child, tk.Frame):
+                child.configure(bg=theme.background)
+                for nested in child.winfo_children():
+                    if isinstance(nested, tk.Frame):
+                        nested.configure(bg=theme.panel, highlightbackground=theme.border, highlightcolor=theme.border)
+                        for label in nested.winfo_children():
+                            if isinstance(label, tk.Label):
+                                if label.cget("text") == "ED":
+                                    label.configure(bg=theme.accent, fg=theme.accent_text)
+                                else:
+                                    label.configure(bg=theme.panel, fg=theme.text)
+        if self.editor_text and self.editor_text.winfo_exists():
+            self.editor_text.configure(
+                bg=theme.log_background,
+                fg=theme.log_text,
+                insertbackground=theme.log_text,
+                selectbackground=theme.selection,
+                selectforeground=theme.text,
+            )
+
+    def save_editor_file(self) -> None:
+        if not self.editor_text or not self.editor_path:
+            return
+        try:
+            content = self.editor_text.get("1.0", "end-1c")
+            self.editor_path.write_text(content, encoding=self.encoding.get().strip() or "utf-8-sig")
+        except OSError as error:
+            self.show_error("Could not save file", f"Windows could not save this file:\n{self.editor_path}\n\n{error}")
+            return
+
+        self.input_submitted = False
+        self.status.set("File saved. Submit upload before converting.")
+        self.update_upload_display()
+        self.editor_status.set(f"Saved edits: {self.editor_path.name}")
 
     def show_upload_popup(self) -> None:
         if self.is_converting:
@@ -1208,13 +1373,14 @@ class ConverterApp:
         progress_row = tk.Frame(stages_panel, bg=theme.panel)
         progress_row.grid(row=1, column=0, sticky="ew", pady=(10, 0))
         progress_row.columnconfigure(0, weight=1)
-        ttk.Progressbar(
+        self.status_progress = ttk.Progressbar(
             progress_row,
             mode="determinate",
             maximum=100,
             variable=self.progress_value,
             style="Accent.Horizontal.TProgressbar",
-        ).grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        )
+        self.status_progress.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         ttk.Label(progress_row, textvariable=self.progress_text, style="Muted.TLabel").grid(row=0, column=1, sticky="e")
 
         log_panel = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=14, pady=14)
@@ -1378,10 +1544,12 @@ class ConverterApp:
 
     def close_status_popup(self) -> None:
         self.stop_status_animation()
+        self.stop_busy_progress()
         if self.status_popup and self.status_popup.winfo_exists():
             self.status_popup.destroy()
         self.status_popup = None
         self.status_stage_canvas = None
+        self.status_progress = None
         self.status_log = None
         self.status_popup_panels = []
 
@@ -1403,6 +1571,7 @@ class ConverterApp:
         self.root.after(0, lambda: self.write_log(f"Step {active_index + 1}: {detail}"))
 
     def set_progress(self, value: float, detail: str | None = None) -> None:
+        self.stop_busy_progress()
         bounded = max(0, min(100, value))
         self.progress_value.set(bounded)
         self.progress_text.set(f"{int(bounded)}%")
@@ -1411,6 +1580,21 @@ class ConverterApp:
 
     def queue_progress(self, value: float, detail: str | None = None) -> None:
         self.root.after(0, lambda: self.set_progress(value, detail))
+
+    def set_busy_progress(self, detail: str) -> None:
+        self.status.set(detail)
+        self.progress_text.set("Working")
+        if self.status_progress and self.status_progress.winfo_exists():
+            self.status_progress.configure(mode="indeterminate")
+            self.status_progress.start(12)
+
+    def queue_busy_progress(self, detail: str) -> None:
+        self.root.after(0, lambda: self.set_busy_progress(detail))
+
+    def stop_busy_progress(self) -> None:
+        if self.status_progress and self.status_progress.winfo_exists():
+            self.status_progress.stop()
+            self.status_progress.configure(mode="determinate", variable=self.progress_value)
 
     def show_toast(self, title: str, message: str, duration: int = 2200) -> None:
         if self.toast_window and self.toast_window.winfo_exists():
@@ -1437,10 +1621,23 @@ class ConverterApp:
 
         self.root.update_idletasks()
         toast.update_idletasks()
-        x = self.root.winfo_rootx() + max(self.root.winfo_width() - toast.winfo_reqwidth() - 28, 20)
-        y = self.root.winfo_rooty() + 78
-        toast.geometry(f"+{x}+{y}")
+        self.center_popup(toast, toast.winfo_reqwidth(), toast.winfo_reqheight())
         toast.after(duration, toast.destroy)
+
+    def dialog_parent(self) -> tk.Misc:
+        if self.editor_popup and self.editor_popup.winfo_exists():
+            return self.editor_popup
+        if self.upload_popup and self.upload_popup.winfo_exists():
+            return self.upload_popup
+        if self.status_popup and self.status_popup.winfo_exists():
+            return self.status_popup
+        return self.root
+
+    def show_error(self, title: str, message: str) -> None:
+        messagebox.showerror(title, message, parent=self.dialog_parent())
+
+    def show_info(self, title: str, message: str) -> None:
+        messagebox.showinfo(title, message, parent=self.dialog_parent())
 
     def update_target_choices(self, clear_paths: bool = True) -> None:
         targets = self.target_labels_for_source(self.from_format.get())
@@ -1463,8 +1660,10 @@ class ConverterApp:
 
         encoding_state = "normal" if spec.supports_encoding else "disabled"
         delimiter_state = "normal" if spec.supports_delimiter else "disabled"
-        self.encoding_entry.configure(state=encoding_state)
-        self.delimiter_entry.configure(state=delimiter_state)
+        if hasattr(self, "encoding_entry"):
+            self.encoding_entry.configure(state=encoding_state)
+        if hasattr(self, "delimiter_entry"):
+            self.delimiter_entry.configure(state=delimiter_state)
         if clear_paths:
             self.input_path.set("")
             self.output_folder.set("")
@@ -1485,6 +1684,7 @@ class ConverterApp:
             self.upload_hint.configure(text=f"Open the upload popup to choose a {self.spec.input_label} file.")
         self.refresh_upload_popup_text()
         self.update_suggested_name()
+        self.update_editor_status()
 
     def display_path(self, path: Path, max_length: int = 92) -> str:
         text = str(path)
@@ -1533,26 +1733,25 @@ class ConverterApp:
             self.set_progress(5, "Upload selected")
             self.render_timeline()
             self.update_upload_display()
-            self.show_toast("Upload selected", "Click Submit Upload in the popup to confirm this input.")
 
     def submit_input(self) -> bool:
         path_text = self.input_path.get().strip()
         if not path_text:
-            messagebox.showerror("Missing upload", "Open the upload popup and choose a file or folder first.")
+            self.show_error("Missing upload", "Open the upload popup and choose a file or folder first.")
             return False
 
         path = Path(path_text)
         if self.mode.get() == "folder":
             if not path.is_dir():
-                messagebox.showerror("Invalid folder", "Please choose a folder for folder conversion.")
+                self.show_error("Invalid folder", "Please choose a folder for folder conversion.")
                 return False
         else:
             if not path.is_file():
-                messagebox.showerror("Invalid file", "Please choose a file for single-file conversion.")
+                self.show_error("Invalid file", "Please choose a file for single-file conversion.")
                 return False
             if path.suffix.lower() not in self.spec.input_extensions:
                 expected = ", ".join(self.spec.input_extensions)
-                messagebox.showerror("Wrong file type", f"Please choose one of these file types: {expected}")
+                self.show_error("Wrong file type", f"Please choose one of these file types: {expected}")
                 return False
 
         self.input_submitted = True
@@ -1561,7 +1760,6 @@ class ConverterApp:
         self.set_progress(12, "Upload submitted")
         self.render_timeline(active_index=None, completed=1, detail=f"Submitted {path.name}")
         self.write_log(f"Submitted upload: {path}")
-        self.show_toast("Upload submitted", "Your input is ready. Choose a save folder or convert with the default location.")
         return True
 
     def choose_output_folder(self) -> None:
@@ -1569,7 +1767,6 @@ class ConverterApp:
         if path:
             self.output_folder.set(path)
             self.set_progress(max(self.progress_value.get(), 18), "Output folder selected")
-            self.show_toast("Save folder selected", self.display_path(Path(path)))
 
     def default_output_name(self, source: Path) -> Path:
         return Path(f"{source.stem} ({self.spec.output_tag}){self.spec.output_extension}")
@@ -1600,7 +1797,7 @@ class ConverterApp:
 
     def start_conversion(self) -> None:
         if not self.input_submitted:
-            messagebox.showerror("Submit upload", "Open the upload popup, choose a file or folder, then click Submit Upload first.")
+            self.show_error("Submit upload", "Open the upload popup, choose a file or folder, then click Submit Upload first.")
             return
 
         self.cancel_event.clear()
@@ -1622,9 +1819,12 @@ class ConverterApp:
         self.cancel_event.set()
         self.status.set("Cancel requested")
         self.write_log("Cancel requested. The current file will finish if it is already being written.")
-        self.show_toast("Cancel requested", "The current file will finish if it is already being written.")
 
     def convert_one(self, input_path: Path, output_path: Path | None) -> Path:
+        self.queue_busy_progress(
+            f"Running converter for {input_path.name}. Large files can take a few minutes."
+        )
+        self.root.after(0, lambda path=input_path: self.write_log(f"Converter engine running: {path.name}"))
         return self.spec.convert(
             input_path,
             output_path,
@@ -1650,8 +1850,8 @@ class ConverterApp:
             self.queue_step(2, f"Reading source file {index} of {total}: {input_file.name}")
             self.queue_progress(base_progress, f"Reading file {index} of {total}")
             output_file = output_directory / self.default_output_name(input_file)
-            self.queue_step(3, f"Writing {self.spec.output_tag} file {index} of {total}: {output_file.name}")
-            self.queue_progress(base_progress + (24 / total), f"Writing file {index} of {total}")
+            self.queue_step(3, f"Converting file {index} of {total}: {output_file.name}")
+            self.queue_progress(base_progress + (24 / total), f"Preparing converter for file {index} of {total}")
             converted.append(self.convert_one(input_file, output_file))
             self.queue_progress(35 + (index / total) * 48, f"Completed file {index} of {total}")
             self.root.after(0, lambda path=output_file: self.write_log(f"Created: {path}"))
@@ -1679,7 +1879,7 @@ class ConverterApp:
                 self.queue_step(2, f"Reading source: {input_path.name}")
                 if self.cancel_event.is_set():
                     raise ConversionError("Conversion cancelled before writing the output file.")
-                self.queue_step(3, f"Writing {self.spec.output_tag}: {output_path.name}")
+                self.queue_step(3, f"Converting to {self.spec.output_tag}: {output_path.name}")
                 created = self.convert_one(input_path, output_path)
                 message = f"Created:\n{created}"
                 outputs = [created]
@@ -1699,6 +1899,7 @@ class ConverterApp:
     def finish(self, message: str, success: bool, cancelled: bool = False, outputs: list[Path] | None = None) -> None:
         def update_ui() -> None:
             self.write_log(message)
+            self.stop_busy_progress()
             self.stop_status_animation()
             if cancelled:
                 self.status.set("Cancelled")
@@ -1717,13 +1918,13 @@ class ConverterApp:
                 self.write_log("Conversion complete. Opening download popup.")
                 self.root.after(700, lambda: (self.close_status_popup(), self.show_download_page(self.last_outputs)))
             else:
-                messagebox.showerror("Conversion stopped" if cancelled else "Conversion failed", message)
+                self.show_error("Conversion stopped" if cancelled else "Conversion failed", message)
 
         self.root.after(0, update_ui)
 
     def show_download_page(self, outputs: list[Path]) -> None:
         if not outputs:
-            self.show_toast("Download ready", "The conversion finished, but no output path was reported.")
+            self.show_info("Download ready", "The conversion finished, but no output path was reported.")
             return
 
         theme = self.theme
@@ -1827,16 +2028,15 @@ class ConverterApp:
         page.attributes("-topmost", True)
         self.center_popup(page, 640, 430)
         page.after(500, lambda: page.attributes("-topmost", False))
-        self.show_toast("Download popup opened", "Use Open File or Open Folder to access the converted output.")
 
     def open_path(self, path: Path) -> None:
         try:
             if not path.exists():
-                messagebox.showerror("Missing output", f"This path no longer exists:\n{path}")
+                self.show_error("Missing output", f"This path no longer exists:\n{path}")
                 return
             os.startfile(str(path))
         except OSError as error:
-            messagebox.showerror("Could not open", f"Windows could not open this path:\n{path}\n\n{error}")
+            self.show_error("Could not open", f"Windows could not open this path:\n{path}\n\n{error}")
 
     def reset_after_download(self, window: tk.Toplevel) -> None:
         window.destroy()
@@ -1848,7 +2048,6 @@ class ConverterApp:
         self.set_progress(0, "Ready")
         self.render_timeline()
         self.update_upload_display()
-        self.show_toast("Ready", "Choose the next file or folder to convert.")
 
     def write_log(self, message: str) -> None:
         self.status_log_lines.append(message)
