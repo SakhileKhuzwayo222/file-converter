@@ -4,8 +4,10 @@ import argparse
 import html
 import posixpath
 import re
+import struct
 import zlib
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
@@ -63,6 +65,16 @@ TEXT_DOCUMENT_EXTENSIONS = (
 )
 
 EPUB_EXTENSIONS = (".epub",)
+MAX_BASIC_PDF_STREAM_BYTES = 5 * 1024 * 1024
+MAX_RAW_IMAGE_STREAM_BYTES = 40 * 1024 * 1024
+MAX_PYPDF_PDF_BYTES = 25 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class PdfImageAsset:
+    path: Path
+    width: int | None
+    height: int | None
 
 
 class ReadableHtmlParser(HTMLParser):
@@ -477,15 +489,55 @@ def extract_pdf_text_with_pypdf(pdf_path: Path) -> str | None:
 
 
 def stream_dictionary(data: bytes, stream_start: int) -> bytes:
-    dictionary_start = data.rfind(b"<<", 0, stream_start)
-    dictionary_end = data.rfind(b">>", 0, stream_start)
+    object_start = data.rfind(b"obj", 0, stream_start)
+    search_start = object_start + len(b"obj") if object_start != -1 else max(0, stream_start - 8192)
+    dictionary_start = data.find(b"<<", search_start, stream_start)
+    dictionary_end = data.rfind(b">>", search_start, stream_start)
     if dictionary_start == -1 or dictionary_end == -1 or dictionary_end < dictionary_start:
         return b""
     return data[dictionary_start : dictionary_end + 2]
 
 
-def iter_pdf_streams(data: bytes) -> list[bytes]:
-    streams: list[bytes] = []
+def declared_stream_length(dictionary: bytes) -> int | None:
+    match = re.search(rb"/Length\s+(\d+)", dictionary)
+    return int(match.group(1)) if match else None
+
+
+def is_image_stream_dictionary(dictionary: bytes) -> bool:
+    return bool(re.search(rb"/Subtype\s*/Image\b", dictionary))
+
+
+def dictionary_int(dictionary: bytes, name: bytes) -> int | None:
+    match = re.search(rb"/" + re.escape(name) + rb"\s+(\d+)", dictionary)
+    return int(match.group(1)) if match else None
+
+
+def image_extension_for_dictionary(dictionary: bytes) -> str | None:
+    if b"/DCTDecode" in dictionary:
+        return ".jpg"
+    if b"/JPXDecode" in dictionary:
+        return ".jp2"
+    if b"/FlateDecode" in dictionary:
+        return ".png"
+    return None
+
+
+def image_color_space_channels(dictionary: bytes) -> int | None:
+    if re.search(rb"/ColorSpace\s*/DeviceGray\b", dictionary):
+        return 1
+    if re.search(rb"/ColorSpace\s*/DeviceRGB\b", dictionary):
+        return 3
+    if re.search(rb"/ColorSpace\s*/DeviceCMYK\b", dictionary):
+        return 4
+    return None
+
+
+def looks_like_text_content_stream(content: bytes) -> bool:
+    return bool(re.search(rb"(?<![A-Za-z])(?:BT|Tj|TJ|Td|TD|T\*)\b", content))
+
+
+def iter_pdf_stream_objects(data: bytes) -> list[tuple[bytes, bytes]]:
+    streams: list[tuple[bytes, bytes]] = []
     position = 0
     while True:
         stream_start = data.find(b"stream", position)
@@ -504,15 +556,120 @@ def iter_pdf_streams(data: bytes) -> list[bytes]:
 
         content = data[content_start:stream_end].rstrip(b"\r\n")
         dictionary = stream_dictionary(data, stream_start)
+        streams.append((dictionary, content))
+        position = stream_end + len(b"endstream")
+    return streams
+
+
+def iter_pdf_streams(data: bytes) -> list[bytes]:
+    streams: list[bytes] = []
+    for dictionary, content in iter_pdf_stream_objects(data):
+        if is_image_stream_dictionary(dictionary):
+            continue
+
+        declared_length = declared_stream_length(dictionary)
+        if declared_length and declared_length > MAX_BASIC_PDF_STREAM_BYTES:
+            continue
+
         if b"/FlateDecode" in dictionary:
             try:
                 content = zlib.decompress(content)
             except zlib.error:
-                position = stream_end + len(b"endstream")
                 continue
+
+        if len(content) > MAX_BASIC_PDF_STREAM_BYTES or not looks_like_text_content_stream(content):
+            continue
         streams.append(content)
-        position = stream_end + len(b"endstream")
     return streams
+
+
+def png_chunk(kind: bytes, data: bytes) -> bytes:
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+
+def rgb_png_bytes(width: int, height: int, rgb_data: bytes) -> bytes:
+    stride = width * 3
+    raw_rows = bytearray()
+    for row in range(height):
+        raw_rows.append(0)
+        raw_rows.extend(rgb_data[row * stride : (row + 1) * stride])
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + png_chunk(b"IDAT", zlib.compress(bytes(raw_rows), 9))
+        + png_chunk(b"IEND", b"")
+    )
+
+
+def raw_pdf_image_to_png(dictionary: bytes, content: bytes) -> bytes | None:
+    width = dictionary_int(dictionary, b"Width")
+    height = dictionary_int(dictionary, b"Height")
+    bits_per_component = dictionary_int(dictionary, b"BitsPerComponent")
+    channels = image_color_space_channels(dictionary)
+    if not width or not height or bits_per_component != 8 or not channels:
+        return None
+
+    expected_length = width * height * channels
+    if expected_length > MAX_RAW_IMAGE_STREAM_BYTES or len(content) < expected_length:
+        return None
+
+    pixels = content[:expected_length]
+    if channels == 3:
+        rgb_data = pixels
+    elif channels == 1:
+        rgb_data = b"".join(bytes((value, value, value)) for value in pixels)
+    else:
+        rgb = bytearray()
+        for index in range(0, expected_length, 4):
+            cyan, magenta, yellow, black = pixels[index : index + 4]
+            rgb.extend(
+                (
+                    max(0, 255 - min(255, cyan + black)),
+                    max(0, 255 - min(255, magenta + black)),
+                    max(0, 255 - min(255, yellow + black)),
+                )
+            )
+        rgb_data = bytes(rgb)
+    return rgb_png_bytes(width, height, rgb_data)
+
+
+def extract_pdf_images(pdf_path: Path, html_destination: Path) -> list[PdfImageAsset]:
+    data = pdf_path.read_bytes()
+    asset_dir = html_destination.with_name(f"{html_destination.stem}_assets")
+    images: list[PdfImageAsset] = []
+    image_index = 0
+
+    for dictionary, content in iter_pdf_stream_objects(data):
+        if not is_image_stream_dictionary(dictionary):
+            continue
+
+        extension = image_extension_for_dictionary(dictionary)
+        if not extension:
+            continue
+
+        width = dictionary_int(dictionary, b"Width")
+        height = dictionary_int(dictionary, b"Height")
+        image_bytes: bytes | None
+        if extension == ".png":
+            declared_length = declared_stream_length(dictionary)
+            if declared_length and declared_length > MAX_RAW_IMAGE_STREAM_BYTES:
+                continue
+            try:
+                image_bytes = raw_pdf_image_to_png(dictionary, zlib.decompress(content))
+            except zlib.error:
+                image_bytes = None
+        else:
+            image_bytes = content
+
+        if not image_bytes:
+            continue
+
+        asset_dir.mkdir(parents=True, exist_ok=True)
+        image_index += 1
+        image_path = asset_dir / f"image_{image_index}{extension}"
+        image_path.write_bytes(image_bytes)
+        images.append(PdfImageAsset(image_path, width, height))
+    return images
 
 
 def parse_literal_string(text: str, start: int) -> tuple[str, int]:
@@ -655,19 +812,49 @@ def extract_pdf_text_basic(pdf_path: Path) -> str:
     return text.strip()
 
 
-def extract_pdf_text(pdf_path: Path) -> str:
+def extract_pdf_text(pdf_path: Path, *, prefer_fast: bool = False) -> str:
+    if prefer_fast:
+        text = extract_pdf_text_basic(pdf_path)
+        if text.strip():
+            return text.strip()
+        try:
+            if pdf_path.stat().st_size > MAX_PYPDF_PDF_BYTES:
+                return ""
+        except OSError:
+            return ""
+
     text = extract_pdf_text_with_pypdf(pdf_path)
     if text and text.strip():
         return text.strip()
     return extract_pdf_text_basic(pdf_path)
 
 
-def paragraphs_to_html(title: str, paragraphs: list[str]) -> str:
+def paragraphs_to_html(title: str, paragraphs: list[str], images: list[PdfImageAsset], output_dir: Path) -> str:
     safe_title = html.escape(title)
     body = "\n".join(
         f"      <p>{'<br>'.join(html.escape(line) for line in paragraph.splitlines())}</p>"
         for paragraph in paragraphs
     )
+    if not body:
+        body = "      <p>No selectable text was found. Extracted images are shown below.</p>"
+
+    image_markup = ""
+    if images:
+        figures: list[str] = ['      <section class="pdf-images">', "        <h2>Images from the PDF</h2>"]
+        for index, image in enumerate(images, start=1):
+            try:
+                source = image.path.resolve().relative_to(output_dir.resolve()).as_posix()
+            except ValueError:
+                source = image.path.as_posix()
+            width_attribute = f' width="{image.width}"' if image.width else ""
+            height_attribute = f' height="{image.height}"' if image.height else ""
+            figures.append(
+                f'        <figure><img src="{html.escape(source, quote=True)}" alt="PDF image {index}"'
+                f'{width_attribute}{height_attribute} loading="lazy"><figcaption>Image {index}</figcaption></figure>'
+            )
+        figures.append("      </section>")
+        image_markup = "\n" + "\n".join(figures)
+
     return f"""<!doctype html>
 <html lang="en">
   <head>
@@ -704,12 +891,38 @@ def paragraphs_to_html(title: str, paragraphs: list[str]) -> str:
         margin: 0 0 16px;
         white-space: normal;
       }}
+      .pdf-images {{
+        margin-top: 32px;
+        padding-top: 22px;
+        border-top: 1px solid #d9e4ec;
+      }}
+      .pdf-images h2 {{
+        margin: 0 0 18px;
+        font-size: 20px;
+      }}
+      figure {{
+        margin: 0 0 22px;
+      }}
+      img {{
+        display: block;
+        max-width: 100%;
+        height: auto;
+        border: 1px solid #d9e4ec;
+        border-radius: 8px;
+        background: #f8fafc;
+      }}
+      figcaption {{
+        margin-top: 6px;
+        color: #64748b;
+        font-size: 13px;
+      }}
     </style>
   </head>
   <body>
     <main>
       <h1>{safe_title}</h1>
 {body}
+{image_markup}
     </main>
   </body>
 </html>
@@ -749,14 +962,17 @@ def convert_pdf_to_html(
     destination = Path(output_path) if output_path else source.with_suffix(".html")
     ensure_output_path(destination, overwrite)
 
-    text = extract_pdf_text(source)
-    if not text.strip():
+    images = extract_pdf_images(source, destination)
+    text = extract_pdf_text_basic(source)
+    if not text.strip() and not images:
+        text = extract_pdf_text(source, prefer_fast=True)
+    if not text.strip() and not images:
         raise ConversionError(
             "No readable text was found in this PDF. It may be scanned or image-only, which needs OCR."
         )
 
-    paragraphs = normalize_paragraphs(text)
-    destination.write_text(paragraphs_to_html(source.stem, paragraphs), encoding="utf-8")
+    paragraphs = normalize_paragraphs(text) if text.strip() else []
+    destination.write_text(paragraphs_to_html(source.stem, paragraphs, images, destination.parent), encoding="utf-8")
     return destination
 
 

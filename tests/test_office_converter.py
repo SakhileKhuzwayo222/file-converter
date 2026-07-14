@@ -36,6 +36,23 @@ def write_simple_pdf(pdf_path: Path) -> None:
     pdf_path.write_bytes(pdf)
 
 
+def write_image_pdf(pdf_path: Path) -> None:
+    image = b"\xff\xd8\xff\xd9"
+    pdf = (
+        b"%PDF-1.4\n"
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n"
+        b"3 0 obj << /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R >> >> >> endobj\n"
+        b"4 0 obj << /Type /XObject /Subtype /Image /Width 1 /Height 1 "
+        b"/BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode /Length "
+        + str(len(image)).encode("ascii")
+        + b" >>\nstream\n"
+        + image
+        + b"\nendstream\nendobj\n%%EOF\n"
+    )
+    pdf_path.write_bytes(pdf)
+
+
 def write_simple_epub(epub_path: Path) -> None:
     with zipfile.ZipFile(epub_path, "w") as book:
         book.writestr("mimetype", "application/epub+zip")
@@ -121,6 +138,21 @@ class OfficeConverterTests(unittest.TestCase):
             self.assertIn("<title>sample</title>", html_text)
             self.assertIn("Hello PDF", html_text)
             self.assertIn("Second line", html_text)
+
+    def test_convert_pdf_to_html_includes_pdf_images(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            pdf_path = temp_dir / "scanned.pdf"
+            write_image_pdf(pdf_path)
+
+            output_path = convert_pdf_to_html(pdf_path)
+
+            asset_path = temp_dir / "scanned_assets" / "image_1.jpg"
+            html_text = output_path.read_text(encoding="utf-8")
+            self.assertTrue(asset_path.exists())
+            self.assertEqual(asset_path.read_bytes(), b"\xff\xd8\xff\xd9")
+            self.assertIn('src="scanned_assets/image_1.jpg"', html_text)
+            self.assertIn("No selectable text was found", html_text)
 
     def test_convert_epub_to_pdf_creates_pdf(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

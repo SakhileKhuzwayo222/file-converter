@@ -971,6 +971,7 @@ class ConverterApp:
         self.status = tk.StringVar(value="Ready")
         self.progress_value = tk.DoubleVar(value=0)
         self.progress_text = tk.StringVar(value="0%")
+        self.estimated_time_text = tk.StringVar(value="Estimated time: choose a file")
         self.editor_status = tk.StringVar(value="Choose an editable source file")
         self.upload_status_text = tk.StringVar(value="No file selected yet")
         self.opener_path = tk.StringVar()
@@ -1443,10 +1444,13 @@ class ConverterApp:
         right.columnconfigure(0, weight=1)
         self.register_background(right, "background")
         queue = self.make_panel(right, 0, 0, sticky="ew", pady=(0, 12))
+        queue.columnconfigure(1, weight=1)
         ttk.Label(queue, text="Current queue", style="Section.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(queue, textvariable=self.progress_text, style="Hero.TLabel").grid(row=1, column=0, sticky="w", pady=(18, 8))
         ttk.Label(queue, text="Status", style="FieldLabel.TLabel").grid(row=2, column=0, sticky="w")
         ttk.Label(queue, textvariable=self.status, style="Muted.TLabel").grid(row=2, column=1, sticky="e")
+        ttk.Label(queue, text="Estimated time", style="FieldLabel.TLabel").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(queue, textvariable=self.estimated_time_text, style="Muted.TLabel").grid(row=3, column=1, sticky="e", pady=(8, 0))
 
         hints = self.make_panel(right, 1, 0, sticky="ew")
         ttk.Label(hints, text="Conversion hints", style="Section.TLabel").grid(row=0, column=0, sticky="w")
@@ -2830,6 +2834,7 @@ function assertAllowedExtension(filename, allowedExtensions) {
         )
         self.status_progress.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         ttk.Label(progress_row, textvariable=self.progress_text, style="Muted.TLabel").grid(row=0, column=1, sticky="e")
+        ttk.Label(progress_row, textvariable=self.estimated_time_text, style="Muted.TLabel").grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         log_panel = tk.Frame(shell, bg=theme.panel, highlightbackground=theme.border, highlightthickness=1, padx=14, pady=14)
         log_panel.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
@@ -3167,12 +3172,80 @@ function assertAllowedExtension(filename, allowedExtensions) {
         self.refresh_upload_popup_text()
         self.update_suggested_name()
         self.update_editor_status()
+        self.update_estimated_time()
 
     def display_path(self, path: Path, max_length: int = 92) -> str:
         text = str(path)
         if len(text) <= max_length:
             return text
         return f"...{text[-(max_length - 3):]}"
+
+    def estimate_path_size(self, path: Path) -> int:
+        if path.is_file():
+            try:
+                return path.stat().st_size
+            except OSError:
+                return 0
+        if not path.is_dir():
+            return 0
+
+        total = 0
+        scanned = 0
+        for root, _, files in os.walk(path):
+            for filename in files:
+                scanned += 1
+                if scanned > 500:
+                    return total
+                try:
+                    total += (Path(root) / filename).stat().st_size
+                except OSError:
+                    continue
+        return total
+
+    def format_duration(self, seconds: float) -> str:
+        seconds = max(1, int(round(seconds)))
+        if seconds < 60:
+            return f"about {seconds} sec"
+        minutes = seconds // 60
+        remainder = seconds % 60
+        if minutes < 60:
+            if remainder < 10:
+                return f"about {minutes} min"
+            return f"about {minutes} min {remainder} sec"
+        hours = minutes // 60
+        remaining_minutes = minutes % 60
+        return f"about {hours} hr {remaining_minutes} min"
+
+    def estimated_conversion_seconds(self, path: Path) -> float:
+        size_mb = max(self.estimate_path_size(path) / (1024 * 1024), 0.05)
+        spec = self.spec
+        if self.uses_folder_source() or spec.output_extension == ".zip":
+            return 4 + size_mb * 0.35
+        if self.mode.get() == "folder":
+            return 6 + size_mb * 0.45
+        if spec.input_extensions == (".pdf",) and spec.output_extension == ".html":
+            return 5 + size_mb * 0.65
+        if spec.input_extensions == (".pdf",):
+            return 8 + size_mb * 0.9
+        if spec.output_extension == ".pdf" or spec.input_extensions in (WORD_EXTENSIONS, EXCEL_EXTENSIONS, POWERPOINT_EXTENSIONS):
+            return 8 + size_mb * 1.1
+        if spec.input_extensions in (AUDIO_EXTENSIONS, VIDEO_EXTENSIONS):
+            return 12 + size_mb * 1.6
+        if spec.supports_encoding or spec.output_extension in {".xlsx", ".docx"}:
+            return 3 + size_mb * 0.25
+        return 4 + size_mb * 0.5
+
+    def update_estimated_time(self) -> None:
+        path_text = self.input_path.get().strip()
+        if not path_text:
+            self.estimated_time_text.set("Estimated time: choose a file")
+            return
+
+        path = Path(path_text)
+        if not path.exists():
+            self.estimated_time_text.set("Estimated time: waiting for valid source")
+            return
+        self.estimated_time_text.set(f"Estimated time: {self.format_duration(self.estimated_conversion_seconds(path))}")
 
     def update_rename_controls(self) -> None:
         folder_mode = self.mode.get() == "folder"
