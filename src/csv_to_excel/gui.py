@@ -32,7 +32,7 @@ from .external import (
     convert_powerpoint_with_office,
     convert_word_with_office,
 )
-from .office import EPUB_EXTENSIONS, TEXT_DOCUMENT_EXTENSIONS, convert_epub_to_pdf, convert_pdf_to_word, convert_text_to_word
+from .office import EPUB_EXTENSIONS, TEXT_DOCUMENT_EXTENSIONS, convert_epub_to_pdf, convert_pdf_to_html, convert_pdf_to_word, convert_text_to_word
 
 
 ConverterFunction = Callable[[Path, Path | None, str, str | None, bool], Path]
@@ -145,6 +145,10 @@ def json_to_excel(input_path: Path, output_path: Path | None, encoding: str, del
 
 def pdf_to_word(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
     return convert_pdf_to_word(input_path, output_path, overwrite=overwrite)
+
+
+def pdf_to_html(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
+    return convert_pdf_to_html(input_path, output_path, overwrite=overwrite)
 
 
 def text_to_word(input_path: Path, output_path: Path | None, encoding: str, delimiter: str | None, overwrite: bool) -> Path:
@@ -275,6 +279,18 @@ CONVERSIONS = [
         supports_encoding=False,
         supports_delimiter=False,
         convert=pdf_to_word,
+    ),
+    ConversionSpec(
+        from_label="PDF (.pdf)",
+        to_label="HTML Page (.html)",
+        input_label="PDF",
+        input_extensions=(".pdf",),
+        output_extension=".html",
+        output_description="HTML page",
+        output_tag="HTML",
+        supports_encoding=False,
+        supports_delimiter=False,
+        convert=pdf_to_html,
     ),
     ConversionSpec(
         from_label="EPUB (.epub)",
@@ -1380,7 +1396,7 @@ class ConverterApp:
         ttk.Label(panel, text="Supported categories", style="Section.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(panel, text="View all", style="AccentLink.TLabel").grid(row=0, column=1, sticky="e")
         categories = (
-            ("Documents", "DOCX, PDF, TXT, ODT, RTF...", "document", "12"),
+            ("Documents", "DOCX, PDF, HTML, TXT, RTF...", "document", "13"),
             ("Data", "CSV, XLSX, JSON, XML, DBF...", "data", "8"),
             ("Audio", "MP3, WAV, AAC, FLAC, OGG...", "audio", "10"),
             ("Video", "MP4, MKV, AVI, MOV, WEBM...", "video", "9"),
@@ -1437,6 +1453,7 @@ class ConverterApp:
         hint_rows = (
             ("CSV / TSV / JSON to Excel", "Convert delimited or JSON data to Excel workbooks."),
             ("PDF to Word", "Convert PDF documents to editable Word files."),
+            ("PDF to HTML", "Create readable HTML pages from text-based PDF files."),
             ("EPUB to PDF", "Convert ebooks to PDF for easy sharing and printing."),
             ("ZIP tools", "Compress folders or extract ZIP archives quickly."),
             ("Audio and video", "Convert media with FFmpeg when installed."),
@@ -1551,7 +1568,7 @@ class ConverterApp:
         supported = self.make_panel(right, 0, 0, sticky="ew", pady=(0, 12))
         ttk.Label(supported, text="Supported opener types", style="Section.TLabel").grid(row=0, column=0, sticky="w")
         opener_groups = (
-            ("Documents", "PDF, DOC, DOCX, ODT, RTF, TXT, EPUB", "document"),
+            ("Documents", "PDF, HTML, DOC, DOCX, ODT, RTF, TXT, EPUB", "document"),
             ("Data", "CSV, TSV, JSON, XLS, XLSX", "data"),
             ("Archives", "ZIP folders and extracted outputs", "archive"),
             ("Media", "MP3, WAV, MP4, MOV, MKV, AVI", "media"),

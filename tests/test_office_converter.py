@@ -7,7 +7,7 @@ from xml.etree import ElementTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from csv_to_excel.office import convert_epub_to_pdf, convert_pdf_to_word, convert_text_to_word
+from csv_to_excel.office import convert_epub_to_pdf, convert_pdf_to_html, convert_pdf_to_word, convert_text_to_word
 
 
 NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
@@ -107,6 +107,20 @@ class OfficeConverterTests(unittest.TestCase):
             self.assertIn("sample", text)
             self.assertIn("Hello PDF", text)
             self.assertIn("Second line", text)
+
+    def test_convert_pdf_to_html_extracts_text(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            pdf_path = temp_dir / "sample.pdf"
+            write_simple_pdf(pdf_path)
+
+            output_path = convert_pdf_to_html(pdf_path)
+
+            html_text = output_path.read_text(encoding="utf-8")
+            self.assertEqual(output_path.suffix, ".html")
+            self.assertIn("<title>sample</title>", html_text)
+            self.assertIn("Hello PDF", html_text)
+            self.assertIn("Second line", html_text)
 
     def test_convert_epub_to_pdf_creates_pdf(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -662,6 +662,60 @@ def extract_pdf_text(pdf_path: Path) -> str:
     return extract_pdf_text_basic(pdf_path)
 
 
+def paragraphs_to_html(title: str, paragraphs: list[str]) -> str:
+    safe_title = html.escape(title)
+    body = "\n".join(
+        f"      <p>{'<br>'.join(html.escape(line) for line in paragraph.splitlines())}</p>"
+        for paragraph in paragraphs
+    )
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{safe_title}</title>
+    <style>
+      :root {{
+        color-scheme: light;
+        font-family: "Segoe UI", Arial, sans-serif;
+        line-height: 1.6;
+        color: #0f172a;
+        background: #f8fafc;
+      }}
+      body {{
+        margin: 0;
+        padding: 40px 20px;
+      }}
+      main {{
+        max-width: 860px;
+        margin: 0 auto;
+        background: #ffffff;
+        border: 1px solid #d9e4ec;
+        border-radius: 10px;
+        padding: 34px;
+        box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
+      }}
+      h1 {{
+        margin: 0 0 22px;
+        font-size: 28px;
+        line-height: 1.2;
+      }}
+      p {{
+        margin: 0 0 16px;
+        white-space: normal;
+      }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>{safe_title}</h1>
+{body}
+    </main>
+  </body>
+</html>
+"""
+
+
 def convert_pdf_to_word(
     pdf_path: Path | str,
     output_path: Path | str | None = None,
@@ -684,6 +738,28 @@ def convert_pdf_to_word(
     return destination
 
 
+def convert_pdf_to_html(
+    pdf_path: Path | str,
+    output_path: Path | str | None = None,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    source = Path(pdf_path)
+    check_source_file(source, (".pdf",), "PDF")
+    destination = Path(output_path) if output_path else source.with_suffix(".html")
+    ensure_output_path(destination, overwrite)
+
+    text = extract_pdf_text(source)
+    if not text.strip():
+        raise ConversionError(
+            "No readable text was found in this PDF. It may be scanned or image-only, which needs OCR."
+        )
+
+    paragraphs = normalize_paragraphs(text)
+    destination.write_text(paragraphs_to_html(source.stem, paragraphs), encoding="utf-8")
+    return destination
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Convert document files.")
     parser.add_argument("input", type=Path, help="PDF, editable text, or EPUB file path.")
@@ -700,7 +776,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         suffix = args.input.suffix.lower()
         if suffix == ".pdf":
-            output = convert_pdf_to_word(args.input, args.output, overwrite=args.overwrite)
+            if args.output and args.output.suffix.lower() in {".html", ".htm"}:
+                output = convert_pdf_to_html(args.input, args.output, overwrite=args.overwrite)
+            else:
+                output = convert_pdf_to_word(args.input, args.output, overwrite=args.overwrite)
         elif suffix in TEXT_DOCUMENT_EXTENSIONS:
             output = convert_text_to_word(
                 args.input,

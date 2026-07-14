@@ -12,6 +12,7 @@ It includes the FC Text Editor for text, data, web, code, script, and config fil
 - TSV to Excel `.xlsx`
 - JSON to Excel `.xlsx`
 - PDF to Word `.docx`
+- PDF to HTML `.html`
 - EPUB to PDF `.pdf`
 - ZIP archive extraction to a folder
 - Folder compression to ZIP `.zip`
@@ -110,6 +111,12 @@ PDF to Word:
 
 ```powershell
 python -m csv_to_excel.office "docs\contract.pdf" -o "docs\contract.docx"
+```
+
+PDF to HTML:
+
+```powershell
+python -m csv_to_excel.office "docs\contract.pdf" -o "docs\contract.html"
 ```
 
 TXT or Markdown to Word:
