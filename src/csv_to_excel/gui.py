@@ -7,6 +7,7 @@ import os
 import struct
 import threading
 import tkinter as tk
+import traceback
 import zlib
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -3493,12 +3494,35 @@ function assertAllowedExtension(filename, allowedExtensions) {
                 self.finish(str(error), success=False, cancelled=True)
             else:
                 self.finish(str(error), success=False)
+        except OSError as error:
+            path = getattr(error, "filename", None) or getattr(error, "filename2", None)
+            path_line = f"\nPath: {path}" if path else ""
+            self.finish(
+                f"Windows could not read or write a file during conversion.{path_line}\n\n{error}",
+                success=False,
+                details=traceback.format_exc(),
+            )
         except Exception as error:
-            self.finish(f"Unexpected error: {error}", success=False)
+            details = str(error).strip() or "No additional details were returned."
+            self.finish(
+                f"The app hit a {type(error).__name__} while converting.\n\n{details}\n\n"
+                "The full technical details were added to the Activity log.",
+                success=False,
+                details=traceback.format_exc(),
+            )
 
-    def finish(self, message: str, success: bool, cancelled: bool = False, outputs: list[Path] | None = None) -> None:
+    def finish(
+        self,
+        message: str,
+        success: bool,
+        cancelled: bool = False,
+        outputs: list[Path] | None = None,
+        details: str | None = None,
+    ) -> None:
         def update_ui() -> None:
             self.write_log(message)
+            if details:
+                self.write_log(details)
             self.stop_busy_progress()
             self.stop_status_animation()
             if cancelled:

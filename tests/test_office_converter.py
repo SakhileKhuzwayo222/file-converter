@@ -7,6 +7,7 @@ from xml.etree import ElementTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from csv_to_excel.converter import ConversionError
 from csv_to_excel.office import convert_epub_to_pdf, convert_pdf_to_html, convert_pdf_to_word, convert_text_to_word
 
 
@@ -197,6 +198,19 @@ class OfficeConverterTests(unittest.TestCase):
             after_index = html_text.index("After image")
             self.assertLess(before_index, image_index)
             self.assertLess(image_index, after_index)
+
+    def test_convert_pdf_to_html_reports_asset_folder_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            pdf_path = temp_dir / "scanned.pdf"
+            output_path = temp_dir / "converted.html"
+            write_image_pdf(pdf_path)
+            (temp_dir / "converted_assets").write_text("not a folder", encoding="utf-8")
+
+            with self.assertRaises(ConversionError) as raised:
+                convert_pdf_to_html(pdf_path, output_path)
+
+            self.assertIn("Could not create the PDF image folder", str(raised.exception))
 
     def test_convert_epub_to_pdf_creates_pdf(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

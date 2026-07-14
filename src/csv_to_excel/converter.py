@@ -215,7 +215,10 @@ def write_xlsx(output_path: Path, rows: list[list[str]], sheet_title: str, freez
 def ensure_output_path(destination: Path, overwrite: bool) -> None:
     if destination.exists() and not overwrite:
         raise ConversionError(f"Output file already exists: {destination}")
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise ConversionError(f"Could not create the output folder:\n{destination.parent}\n\n{error}") from error
 
 
 def check_table_source(source: Path, suffixes: tuple[str, ...], label: str) -> None:

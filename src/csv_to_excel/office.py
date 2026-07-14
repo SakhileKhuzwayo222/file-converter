@@ -84,6 +84,10 @@ class PdfHtmlBlock:
     image: PdfImageAsset | None = None
 
 
+def file_error_message(action: str, path: Path, error: OSError) -> str:
+    return f"{action}:\n{path}\n\n{error}"
+
+
 class ReadableHtmlParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -439,7 +443,10 @@ def convert_epub_to_pdf(
     check_source_file(source, EPUB_EXTENSIONS, "EPUB")
     destination = Path(output_path) if output_path else source.with_suffix(".pdf")
     ensure_output_path(destination, overwrite)
-    write_text_pdf(destination, source.stem, extract_epub_text(source))
+    try:
+        write_text_pdf(destination, source.stem, extract_epub_text(source))
+    except OSError as error:
+        raise ConversionError(file_error_message("Could not write the PDF file", destination, error)) from error
     return destination
 
 
@@ -476,9 +483,17 @@ def convert_text_to_word(
     destination = Path(output_path) if output_path else source.with_suffix(".docx")
     ensure_output_path(destination, overwrite)
 
-    text = source.read_text(encoding=encoding)
+    try:
+        text = source.read_text(encoding=encoding)
+    except UnicodeError as error:
+        raise ConversionError(f"Could not read this file as editable text with {encoding}: {error}") from error
+    except OSError as error:
+        raise ConversionError(file_error_message("Could not read the source file", source, error)) from error
     paragraphs = normalize_paragraphs(text)
-    write_docx(destination, source.stem, paragraphs or [""])
+    try:
+        write_docx(destination, source.stem, paragraphs or [""])
+    except OSError as error:
+        raise ConversionError(file_error_message("Could not write the Word file", destination, error)) from error
     return destination
 
 
@@ -659,7 +674,7 @@ def image_asset_from_stream(
             return None
         try:
             image_bytes = raw_pdf_image_to_png(dictionary, zlib.decompress(content))
-        except zlib.error:
+        except (zlib.error, ValueError, OverflowError, struct.error):
             image_bytes = None
     else:
         image_bytes = content
@@ -667,9 +682,16 @@ def image_asset_from_stream(
     if not image_bytes:
         return None
 
-    asset_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        asset_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        raise ConversionError(file_error_message("Could not create the PDF image folder", asset_dir, error)) from error
+
     image_path = asset_dir / f"image_{image_index}{extension}"
-    image_path.write_bytes(image_bytes)
+    try:
+        image_path.write_bytes(image_bytes)
+    except OSError as error:
+        raise ConversionError(file_error_message("Could not write an extracted PDF image", image_path, error)) from error
     return PdfImageAsset(image_path, width, height)
 
 
@@ -699,7 +721,10 @@ def extract_pdf_html_blocks(data: bytes, html_destination: Path) -> list[PdfHtml
         if len(content) > MAX_BASIC_PDF_STREAM_BYTES or not looks_like_text_content_stream(content):
             continue
 
-        text = extract_text_from_pdf_content(content).strip()
+        try:
+            text = extract_text_from_pdf_content(content).strip()
+        except (ValueError, OverflowError, UnicodeError):
+            continue
         if text:
             blocks.append(PdfHtmlBlock(kind="text", text=text))
     return blocks
@@ -986,14 +1011,20 @@ def convert_pdf_to_word(
     destination = Path(output_path) if output_path else source.with_suffix(".docx")
     ensure_output_path(destination, overwrite)
 
-    text = extract_pdf_text(source)
+    try:
+        text = extract_pdf_text(source)
+    except OSError as error:
+        raise ConversionError(file_error_message("Could not read the PDF file", source, error)) from error
     if not text.strip():
         raise ConversionError(
             "No readable text was found in this PDF. It may be scanned or image-only, which needs OCR."
         )
 
     paragraphs = normalize_paragraphs(text)
-    write_docx(destination, source.stem, paragraphs)
+    try:
+        write_docx(destination, source.stem, paragraphs)
+    except OSError as error:
+        raise ConversionError(file_error_message("Could not write the Word file", destination, error)) from error
     return destination
 
 
@@ -1008,19 +1039,36 @@ def convert_pdf_to_html(
     destination = Path(output_path) if output_path else source.with_suffix(".html")
     ensure_output_path(destination, overwrite)
 
-    data = source.read_bytes()
-    blocks = extract_pdf_html_blocks(data, destination)
+    try:
+        data = source.read_bytes()
+    except OSError as error:
+        raise ConversionError(file_error_message("Could not read the PDF file", source, error)) from error
+
+    try:
+        blocks = extract_pdf_html_blocks(data, destination)
+    except ConversionError:
+        raise
+    except (ValueError, OverflowError, UnicodeError, zlib.error, struct.error) as error:
+        details = str(error).strip() or "No extra details were provided."
+        raise ConversionError(f"Could not inspect the PDF contents: {type(error).__name__}: {details}") from error
+
     has_text = any(block.kind == "text" and block.text.strip() for block in blocks)
     has_images = any(block.kind == "image" for block in blocks)
     if not has_text and not has_images:
-        text = extract_pdf_text(source, prefer_fast=True)
+        try:
+            text = extract_pdf_text(source, prefer_fast=True)
+        except OSError as error:
+            raise ConversionError(file_error_message("Could not read the PDF file", source, error)) from error
         if text.strip():
             blocks = [PdfHtmlBlock(kind="text", text=text)]
 
     if not blocks:
         raise ConversionError("No readable text or supported embedded images were found in this PDF. It may need OCR.")
 
-    destination.write_text(blocks_to_html(source.stem, blocks, destination.parent), encoding="utf-8")
+    try:
+        destination.write_text(blocks_to_html(source.stem, blocks, destination.parent), encoding="utf-8")
+    except OSError as error:
+        raise ConversionError(file_error_message("Could not write the HTML file", destination, error)) from error
     return destination
 
 
