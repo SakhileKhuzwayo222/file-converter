@@ -17,8 +17,10 @@ from csv_to_excel.office import (
     convert_pdf_to_word,
     convert_text_to_word,
     decompress_pdf_stream,
+    extract_pdf_html_blocks,
     extract_text_from_pdf_content,
     iter_pdf_stream_objects,
+    read_pdf_with_mmap,
 )
 
 
@@ -209,7 +211,7 @@ class OfficeConverterTests(unittest.TestCase):
             self.assertIn("Hello PDF", text)
             self.assertIn("Second line", text)
 
-    def test_convert_pdf_to_html_extracts_text(self) -> None:
+    def test_convert_pdf_to_html_embeds_original_pdf_for_exact_layout(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temp_dir = Path(directory)
             pdf_path = temp_dir / "sample.pdf"
@@ -217,13 +219,16 @@ class OfficeConverterTests(unittest.TestCase):
 
             output_path = convert_pdf_to_html(pdf_path)
 
+            asset_path = temp_dir / "sample_assets" / "sample.pdf"
             html_text = output_path.read_text(encoding="utf-8")
             self.assertEqual(output_path.suffix, ".html")
+            self.assertEqual(asset_path.read_bytes(), pdf_path.read_bytes())
             self.assertIn("<title>sample</title>", html_text)
-            self.assertIn("Hello PDF", html_text)
-            self.assertIn("Second line", html_text)
+            self.assertIn('class="pdf-document"', html_text)
+            self.assertIn('data="sample_assets/sample.pdf#toolbar=0&amp;navpanes=0&amp;scrollbar=1&amp;view=FitH"', html_text)
+            self.assertIn("height: 100vh", html_text)
 
-    def test_convert_pdf_to_html_includes_pdf_images(self) -> None:
+    def test_convert_pdf_to_html_copies_pdf_without_extracting_duplicate_images(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temp_dir = Path(directory)
             pdf_path = temp_dir / "scanned.pdf"
@@ -231,53 +236,67 @@ class OfficeConverterTests(unittest.TestCase):
 
             output_path = convert_pdf_to_html(pdf_path)
 
-            asset_path = temp_dir / "scanned_assets" / "image_1.jpg"
+            asset_dir = temp_dir / "scanned_assets"
+            asset_path = asset_dir / "scanned.pdf"
             html_text = output_path.read_text(encoding="utf-8")
             self.assertTrue(asset_path.exists())
-            self.assertEqual(asset_path.read_bytes(), b"\xff\xd8\xff\xd9")
-            self.assertIn('src="scanned_assets/image_1.jpg"', html_text)
-            self.assertIn("No selectable text was found", html_text)
+            self.assertEqual(list(asset_dir.glob("*.jpg")), [])
+            self.assertIn('data="scanned_assets/scanned.pdf#toolbar=0', html_text)
 
-    def test_convert_pdf_to_html_unwraps_flate_encoded_jpegs(self) -> None:
+    def test_convert_pdf_to_html_removes_legacy_extracted_images(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            pdf_path = temp_dir / "sample.pdf"
+            asset_dir = temp_dir / "sample_assets"
+            asset_dir.mkdir()
+            stale_asset = asset_dir / "image_1.jpg"
+            stale_asset.write_bytes(b"old extracted image")
+            write_simple_pdf(pdf_path)
+
+            convert_pdf_to_html(pdf_path)
+
+            self.assertFalse(stale_asset.exists())
+            self.assertTrue((asset_dir / "sample.pdf").exists())
+
+    def test_pdf_image_extraction_unwraps_flate_encoded_jpegs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temp_dir = Path(directory)
             pdf_path = temp_dir / "wrapped.pdf"
+            output_path = temp_dir / "wrapped.html"
             expected_image = write_wrapped_jpeg_pdf(pdf_path)
 
-            output_path = convert_pdf_to_html(pdf_path)
+            blocks = read_pdf_with_mmap(pdf_path, lambda data: extract_pdf_html_blocks(data, output_path))
 
             asset_path = temp_dir / "wrapped_assets" / "image_1.jpg"
-            self.assertTrue(output_path.exists())
+            self.assertTrue(any(block.kind == "image" for block in blocks))
             self.assertEqual(asset_path.read_bytes(), expected_image)
 
-    def test_convert_pdf_to_html_skips_soft_mask_duplicates(self) -> None:
+    def test_pdf_image_extraction_skips_soft_mask_duplicates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temp_dir = Path(directory)
             pdf_path = temp_dir / "masked.pdf"
+            output_path = temp_dir / "masked.html"
             write_masked_image_pdf(pdf_path)
 
-            output_path = convert_pdf_to_html(pdf_path)
+            blocks = read_pdf_with_mmap(pdf_path, lambda data: extract_pdf_html_blocks(data, output_path))
 
             assets = sorted((temp_dir / "masked_assets").glob("*"))
-            html_text = output_path.read_text(encoding="utf-8")
+            image_blocks = [block for block in blocks if block.kind == "image"]
+            self.assertEqual(len(image_blocks), 1)
             self.assertEqual([path.name for path in assets], ["image_1.jpg"])
-            self.assertIn('src="masked_assets/image_1.jpg"', html_text)
-            self.assertNotIn("image_2", html_text)
 
-    def test_convert_pdf_to_html_places_images_in_stream_order(self) -> None:
+    def test_pdf_image_extraction_places_images_in_stream_order(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temp_dir = Path(directory)
             pdf_path = temp_dir / "mixed.pdf"
+            output_path = temp_dir / "mixed.html"
             write_text_image_text_pdf(pdf_path)
 
-            output_path = convert_pdf_to_html(pdf_path)
+            blocks = read_pdf_with_mmap(pdf_path, lambda data: extract_pdf_html_blocks(data, output_path))
 
-            html_text = output_path.read_text(encoding="utf-8")
-            before_index = html_text.index("Before image")
-            image_index = html_text.index('src="mixed_assets/image_1.jpg"')
-            after_index = html_text.index("After image")
-            self.assertLess(before_index, image_index)
-            self.assertLess(image_index, after_index)
+            self.assertIn("Before image", blocks[0].text)
+            self.assertEqual(blocks[1].kind, "image")
+            self.assertIn("After image", blocks[2].text)
 
     def test_convert_pdf_to_html_reports_asset_folder_errors(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -290,7 +309,7 @@ class OfficeConverterTests(unittest.TestCase):
             with self.assertRaises(ConversionError) as raised:
                 convert_pdf_to_html(pdf_path, output_path)
 
-            self.assertIn("Could not create the PDF image folder", str(raised.exception))
+            self.assertIn("Could not copy the PDF for exact HTML viewing", str(raised.exception))
 
     def test_pdf_stream_decompression_rejects_oversized_output(self) -> None:
         payload = zlib.compress(b"x" * (MAX_BASIC_PDF_STREAM_BYTES + 1))

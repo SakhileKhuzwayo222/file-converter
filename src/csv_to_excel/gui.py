@@ -287,7 +287,7 @@ CONVERSIONS = [
         input_label="PDF",
         input_extensions=(".pdf",),
         output_extension=".html",
-        output_description="HTML page",
+        output_description="exact-layout HTML page",
         output_tag="HTML",
         supports_encoding=False,
         supports_delimiter=False,
@@ -1458,7 +1458,7 @@ class ConverterApp:
         hint_rows = (
             ("CSV / TSV / JSON to Excel", "Convert delimited or JSON data to Excel workbooks."),
             ("PDF to Word", "Convert PDF documents to editable Word files."),
-            ("PDF to HTML", "Create readable HTML pages from text-based PDF files."),
+            ("PDF to HTML", "Preserve the original PDF layout inside an HTML page."),
             ("EPUB to PDF", "Convert ebooks to PDF for easy sharing and printing."),
             ("ZIP tools", "Compress folders or extract ZIP archives quickly."),
             ("Audio and video", "Convert media with FFmpeg when installed."),

@@ -5,6 +5,7 @@ import html
 import mmap
 import posixpath
 import re
+import shutil
 import struct
 import zlib
 import zipfile
@@ -1089,6 +1090,100 @@ def blocks_to_html(title: str, blocks: list[PdfHtmlBlock], output_dir: Path) -> 
 """
 
 
+def pdf_viewer_asset_path(source: Path, html_destination: Path) -> Path:
+    asset_dir = html_destination.with_name(f"{html_destination.stem}_assets")
+    return asset_dir / source.name
+
+
+def clean_legacy_pdf_html_assets(asset_dir: Path) -> None:
+    if not asset_dir.exists() or not asset_dir.is_dir():
+        return
+    for asset in asset_dir.iterdir():
+        if asset.is_file() and re.fullmatch(r"image_\d+\.(?:jpg|jpeg|jp2|png)", asset.name.lower()):
+            try:
+                asset.unlink()
+            except OSError:
+                continue
+
+
+def copy_pdf_viewer_asset(source: Path, html_destination: Path) -> Path:
+    asset_path = pdf_viewer_asset_path(source, html_destination)
+    try:
+        asset_path.parent.mkdir(parents=True, exist_ok=True)
+        clean_legacy_pdf_html_assets(asset_path.parent)
+        shutil.copy2(source, asset_path)
+    except OSError as error:
+        raise ConversionError(file_error_message("Could not copy the PDF for exact HTML viewing", asset_path, error)) from error
+    return asset_path
+
+
+def pdf_viewer_html(title: str, pdf_asset: Path, output_dir: Path) -> str:
+    safe_title = html.escape(title)
+    try:
+        source = pdf_asset.resolve().relative_to(output_dir.resolve()).as_posix()
+    except ValueError:
+        source = pdf_asset.as_posix()
+    pdf_source = html.escape(f"{source}#toolbar=0&navpanes=0&scrollbar=1&view=FitH", quote=True)
+    link_source = html.escape(source, quote=True)
+
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{safe_title}</title>
+    <style>
+      html,
+      body {{
+        height: 100%;
+        margin: 0;
+        background: #2f3338;
+      }}
+      .pdf-document {{
+        display: block;
+        width: 100%;
+        height: 100vh;
+        border: 0;
+        background: #ffffff;
+      }}
+      .fallback {{
+        box-sizing: border-box;
+        max-width: 720px;
+        margin: 48px auto;
+        padding: 24px;
+        font-family: "Segoe UI", Arial, sans-serif;
+        color: #0f172a;
+        background: #ffffff;
+        border: 1px solid #d9e4ec;
+      }}
+      .fallback a {{
+        color: #0d9488;
+        font-weight: 600;
+      }}
+      @media print {{
+        html,
+        body {{
+          background: #ffffff;
+        }}
+        .pdf-document {{
+          height: 100vh;
+        }}
+      }}
+    </style>
+  </head>
+  <body>
+    <object class="pdf-document" data="{pdf_source}" type="application/pdf" aria-label="{safe_title}">
+      <div class="fallback">
+        <h1>{safe_title}</h1>
+        <p>This HTML file preserves the original PDF layout by opening the PDF asset directly.</p>
+        <p><a href="{link_source}">Open the PDF document</a></p>
+      </div>
+    </object>
+  </body>
+</html>
+"""
+
+
 def convert_pdf_to_word(
     pdf_path: Path | str,
     output_path: Path | str | None = None,
@@ -1128,29 +1223,9 @@ def convert_pdf_to_html(
     destination = Path(output_path) if output_path else source.with_suffix(".html")
     ensure_output_path(destination, overwrite)
 
+    pdf_asset = copy_pdf_viewer_asset(source, destination)
     try:
-        blocks = read_pdf_with_mmap(source, lambda data: extract_pdf_html_blocks(data, destination))
-    except ConversionError:
-        raise
-    except (ValueError, OverflowError, UnicodeError, zlib.error, struct.error, MemoryError) as error:
-        details = str(error).strip() or "No extra details were provided."
-        raise ConversionError(f"Could not inspect the PDF contents: {type(error).__name__}: {details}") from error
-
-    has_text = any(block.kind == "text" and block.text.strip() for block in blocks)
-    has_images = any(block.kind == "image" for block in blocks)
-    if not has_text and not has_images:
-        try:
-            text = extract_pdf_text(source, prefer_fast=True)
-        except OSError as error:
-            raise ConversionError(file_error_message("Could not read the PDF file", source, error)) from error
-        if text.strip():
-            blocks = [PdfHtmlBlock(kind="text", text=text)]
-
-    if not blocks:
-        raise ConversionError("No readable text or supported embedded images were found in this PDF. It may need OCR.")
-
-    try:
-        destination.write_text(blocks_to_html(source.stem, blocks, destination.parent), encoding="utf-8")
+        destination.write_text(pdf_viewer_html(source.stem, pdf_asset, destination.parent), encoding="utf-8")
     except OSError as error:
         raise ConversionError(file_error_message("Could not write the HTML file", destination, error)) from error
     return destination
