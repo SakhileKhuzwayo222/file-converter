@@ -519,7 +519,7 @@ def extract_pdf_text_with_pypdf(pdf_path: Path) -> str | None:
         return None
 
 
-def stream_dictionary(data: bytes, stream_start: int) -> bytes:
+def stream_dictionary(data: bytes | mmap.mmap, stream_start: int) -> bytes:
     object_start = data.rfind(b"obj", 0, stream_start)
     search_start = object_start + len(b"obj") if object_start != -1 else max(0, stream_start - 8192)
     dictionary_start = data.find(b"<<", search_start, stream_start)
@@ -529,6 +529,15 @@ def stream_dictionary(data: bytes, stream_start: int) -> bytes:
     return data[dictionary_start : dictionary_end + 2]
 
 
+def stream_object_number(data: bytes | mmap.mmap, stream_start: int) -> int | None:
+    object_marker = data.rfind(b"obj", 0, stream_start)
+    if object_marker == -1:
+        return None
+    prefix = data[max(0, object_marker - 64) : object_marker + len(b"obj")]
+    match = re.search(rb"(\d+)\s+\d+\s+obj\b\s*$", prefix)
+    return int(match.group(1)) if match else None
+
+
 def declared_stream_length(dictionary: bytes) -> int | None:
     match = re.search(rb"/Length\s+(\d+)", dictionary)
     return int(match.group(1)) if match else None
@@ -536,6 +545,18 @@ def declared_stream_length(dictionary: bytes) -> int | None:
 
 def is_image_stream_dictionary(dictionary: bytes) -> bool:
     return bool(re.search(rb"/Subtype\s*/Image\b", dictionary))
+
+
+def is_image_mask_dictionary(dictionary: bytes) -> bool:
+    return bool(re.search(rb"/ImageMask\s+true\b", dictionary))
+
+
+def referenced_image_mask_object_numbers(data: bytes | mmap.mmap) -> set[int]:
+    mask_objects: set[int] = set()
+    for _object_number, dictionary, _content in iter_pdf_stream_records(data, include_content=False):
+        for match in re.finditer(rb"/(?:SMask|Mask)\s+(\d+)\s+\d+\s+R\b", dictionary):
+            mask_objects.add(int(match.group(1)))
+    return mask_objects
 
 
 def dictionary_int(dictionary: bytes, name: bytes) -> int | None:
@@ -594,7 +615,7 @@ def decompress_pdf_stream(content: bytes, max_bytes: int) -> bytes | None:
     return output
 
 
-def iter_pdf_stream_objects(data: bytes | mmap.mmap):
+def iter_pdf_stream_records(data: bytes | mmap.mmap, *, include_content: bool = True):
     position = 0
     while True:
         stream_start = data.find(b"stream", position)
@@ -612,15 +633,25 @@ def iter_pdf_stream_objects(data: bytes | mmap.mmap):
             break
 
         dictionary = stream_dictionary(data, stream_start)
+        object_number = stream_object_number(data, stream_start)
         position = stream_end + len(b"endstream")
+        if not include_content:
+            yield object_number, dictionary, b""
+            continue
+
         stream_length = max(0, stream_end - content_start)
         max_stream_bytes = MAX_RAW_IMAGE_STREAM_BYTES if is_image_stream_dictionary(dictionary) else MAX_BASIC_PDF_STREAM_BYTES
         declared_length = declared_stream_length(dictionary)
         if (declared_length and declared_length > max_stream_bytes) or stream_length > max_stream_bytes:
-            yield dictionary, b""
+            yield object_number, dictionary, b""
             continue
 
         content = data[content_start:stream_end].rstrip(b"\r\n")
+        yield object_number, dictionary, content
+
+
+def iter_pdf_stream_objects(data: bytes | mmap.mmap):
+    for _object_number, dictionary, content in iter_pdf_stream_records(data):
         yield dictionary, content
 
 
@@ -720,7 +751,10 @@ def image_asset_from_stream(
         except (ValueError, OverflowError, struct.error, MemoryError):
             image_bytes = None
     else:
-        image_bytes = content
+        if b"/FlateDecode" in dictionary:
+            image_bytes = decompress_pdf_stream(content, MAX_RAW_IMAGE_STREAM_BYTES)
+        else:
+            image_bytes = content
 
     if not image_bytes:
         return None
@@ -738,16 +772,19 @@ def image_asset_from_stream(
     return PdfImageAsset(image_path, width, height)
 
 
-def extract_pdf_html_blocks(data: bytes, html_destination: Path) -> list[PdfHtmlBlock]:
+def extract_pdf_html_blocks(data: bytes | mmap.mmap, html_destination: Path) -> list[PdfHtmlBlock]:
     asset_dir = html_destination.with_name(f"{html_destination.stem}_assets")
     blocks: list[PdfHtmlBlock] = []
     image_index = 0
+    mask_object_numbers = referenced_image_mask_object_numbers(data)
 
-    for dictionary, content in iter_pdf_stream_objects(data):
+    for object_number, dictionary, content in iter_pdf_stream_records(data):
         if is_image_stream_dictionary(dictionary):
-            image_index += 1
-            image = image_asset_from_stream(dictionary, content, asset_dir, image_index)
+            if is_image_mask_dictionary(dictionary) or object_number in mask_object_numbers:
+                continue
+            image = image_asset_from_stream(dictionary, content, asset_dir, image_index + 1)
             if image:
+                image_index += 1
                 blocks.append(PdfHtmlBlock(kind="image", image=image))
             continue
 
@@ -857,13 +894,20 @@ def tokenize_pdf_content(content: bytes) -> list[object]:
         elif char == "]":
             tokens.append("]")
             index += 1
+        elif text.startswith("<<", index) or text.startswith(">>", index):
+            index += 2
         elif char == "<" and index + 1 < len(text) and text[index + 1] != "<":
             value, index = parse_hex_string(text, index)
             tokens.append(value)
+        elif char in "<>":
+            index += 1
         else:
             end = index
             while end < len(text) and not text[end].isspace() and text[end] not in "[]()<>":
                 end += 1
+            if end == index:
+                index += 1
+                continue
             tokens.append(text[index:end])
             index = end
     return tokens

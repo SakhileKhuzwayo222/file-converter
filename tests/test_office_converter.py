@@ -17,6 +17,7 @@ from csv_to_excel.office import (
     convert_pdf_to_word,
     convert_text_to_word,
     decompress_pdf_stream,
+    extract_text_from_pdf_content,
     iter_pdf_stream_objects,
 )
 
@@ -59,6 +60,49 @@ def write_image_pdf(pdf_path: Path) -> None:
         + str(len(image)).encode("ascii")
         + b" >>\nstream\n"
         + image
+        + b"\nendstream\nendobj\n%%EOF\n"
+    )
+    pdf_path.write_bytes(pdf)
+
+
+def write_wrapped_jpeg_pdf(pdf_path: Path) -> bytes:
+    image = b"\xff\xd8\xff\xe0wrapped-jpeg\xff\xd9"
+    wrapped_image = zlib.compress(image)
+    pdf = (
+        b"%PDF-1.4\n"
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n"
+        b"3 0 obj << /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R >> >> >> endobj\n"
+        b"4 0 obj << /Type /XObject /Subtype /Image /Width 1 /Height 1 "
+        b"/BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter [/FlateDecode /DCTDecode] /Length "
+        + str(len(wrapped_image)).encode("ascii")
+        + b" >>\nstream\n"
+        + wrapped_image
+        + b"\nendstream\nendobj\n%%EOF\n"
+    )
+    pdf_path.write_bytes(pdf)
+    return image
+
+
+def write_masked_image_pdf(pdf_path: Path) -> None:
+    image = b"\xff\xd8\xff\xe0main-image\xff\xd9"
+    mask = b"\xff\xd8\xff\xe0mask-image\xff\xd9"
+    pdf = (
+        b"%PDF-1.4\n"
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n"
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n"
+        b"3 0 obj << /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R /Mask1 5 0 R >> >> >> endobj\n"
+        b"4 0 obj << /Type /XObject /Subtype /Image /Width 1 /Height 1 "
+        b"/BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode /SMask 5 0 R /Length "
+        + str(len(image)).encode("ascii")
+        + b" >>\nstream\n"
+        + image
+        + b"\nendstream\nendobj\n"
+        b"5 0 obj << /Type /XObject /Subtype /Image /Width 1 /Height 1 "
+        b"/BitsPerComponent 8 /ColorSpace /DeviceGray /Filter /DCTDecode /Length "
+        + str(len(mask)).encode("ascii")
+        + b" >>\nstream\n"
+        + mask
         + b"\nendstream\nendobj\n%%EOF\n"
     )
     pdf_path.write_bytes(pdf)
@@ -194,6 +238,32 @@ class OfficeConverterTests(unittest.TestCase):
             self.assertIn('src="scanned_assets/image_1.jpg"', html_text)
             self.assertIn("No selectable text was found", html_text)
 
+    def test_convert_pdf_to_html_unwraps_flate_encoded_jpegs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            pdf_path = temp_dir / "wrapped.pdf"
+            expected_image = write_wrapped_jpeg_pdf(pdf_path)
+
+            output_path = convert_pdf_to_html(pdf_path)
+
+            asset_path = temp_dir / "wrapped_assets" / "image_1.jpg"
+            self.assertTrue(output_path.exists())
+            self.assertEqual(asset_path.read_bytes(), expected_image)
+
+    def test_convert_pdf_to_html_skips_soft_mask_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            temp_dir = Path(directory)
+            pdf_path = temp_dir / "masked.pdf"
+            write_masked_image_pdf(pdf_path)
+
+            output_path = convert_pdf_to_html(pdf_path)
+
+            assets = sorted((temp_dir / "masked_assets").glob("*"))
+            html_text = output_path.read_text(encoding="utf-8")
+            self.assertEqual([path.name for path in assets], ["image_1.jpg"])
+            self.assertIn('src="masked_assets/image_1.jpg"', html_text)
+            self.assertNotIn("image_2", html_text)
+
     def test_convert_pdf_to_html_places_images_in_stream_order(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             temp_dir = Path(directory)
@@ -226,6 +296,11 @@ class OfficeConverterTests(unittest.TestCase):
         payload = zlib.compress(b"x" * (MAX_BASIC_PDF_STREAM_BYTES + 1))
 
         self.assertIsNone(decompress_pdf_stream(payload, MAX_BASIC_PDF_STREAM_BYTES))
+
+    def test_pdf_text_parser_skips_dictionary_delimiters(self) -> None:
+        content = b"BT << /ActualText (ignored) >> /F1 12 Tf (Visible text) Tj ET"
+
+        self.assertIn("Visible text", extract_text_from_pdf_content(content))
 
     def test_pdf_stream_iterator_skips_declared_oversized_images(self) -> None:
         data = (
