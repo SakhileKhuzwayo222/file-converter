@@ -3,12 +3,22 @@ import sys
 import tempfile
 import unittest
 import zipfile
+import zlib
 from xml.etree import ElementTree
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from csv_to_excel.converter import ConversionError
-from csv_to_excel.office import convert_epub_to_pdf, convert_pdf_to_html, convert_pdf_to_word, convert_text_to_word
+from csv_to_excel.office import (
+    MAX_BASIC_PDF_STREAM_BYTES,
+    MAX_RAW_IMAGE_STREAM_BYTES,
+    convert_epub_to_pdf,
+    convert_pdf_to_html,
+    convert_pdf_to_word,
+    convert_text_to_word,
+    decompress_pdf_stream,
+    iter_pdf_stream_objects,
+)
 
 
 NAMESPACE = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
@@ -211,6 +221,27 @@ class OfficeConverterTests(unittest.TestCase):
                 convert_pdf_to_html(pdf_path, output_path)
 
             self.assertIn("Could not create the PDF image folder", str(raised.exception))
+
+    def test_pdf_stream_decompression_rejects_oversized_output(self) -> None:
+        payload = zlib.compress(b"x" * (MAX_BASIC_PDF_STREAM_BYTES + 1))
+
+        self.assertIsNone(decompress_pdf_stream(payload, MAX_BASIC_PDF_STREAM_BYTES))
+
+    def test_pdf_stream_iterator_skips_declared_oversized_images(self) -> None:
+        data = (
+            b"%PDF-1.4\n"
+            b"1 0 obj << /Type /XObject /Subtype /Image /Width 1 /Height 1 "
+            b"/BitsPerComponent 8 /ColorSpace /DeviceRGB /Filter /DCTDecode /Length "
+            + str(MAX_RAW_IMAGE_STREAM_BYTES + 1).encode("ascii")
+            + b" >>\nstream\n"
+            + b"\xff\xd8\xff\xd9"
+            + b"\nendstream\nendobj\n%%EOF\n"
+        )
+
+        streams = list(iter_pdf_stream_objects(data))
+
+        self.assertEqual(len(streams), 1)
+        self.assertEqual(streams[0][1], b"")
 
     def test_convert_epub_to_pdf_creates_pdf(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

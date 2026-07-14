@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import mmap
 import posixpath
 import re
 import struct
@@ -86,6 +87,14 @@ class PdfHtmlBlock:
 
 def file_error_message(action: str, path: Path, error: OSError) -> str:
     return f"{action}:\n{path}\n\n{error}"
+
+
+def pdf_memory_error_message(path: Path) -> str:
+    return (
+        "This PDF is too large for the current conversion engine to inspect safely:\n"
+        f"{path}\n\n"
+        "Try splitting the PDF into smaller sections, or close other apps and run the conversion again."
+    )
 
 
 class ReadableHtmlParser(HTMLParser):
@@ -558,8 +567,34 @@ def looks_like_text_content_stream(content: bytes) -> bool:
     return bool(re.search(rb"(?<![A-Za-z])(?:BT|Tj|TJ|Td|TD|T\*)\b", content))
 
 
-def iter_pdf_stream_objects(data: bytes) -> list[tuple[bytes, bytes]]:
-    streams: list[tuple[bytes, bytes]] = []
+def read_pdf_with_mmap(pdf_path: Path, reader):
+    try:
+        if pdf_path.stat().st_size == 0:
+            return reader(b"")
+        with pdf_path.open("rb") as pdf_file:
+            with mmap.mmap(pdf_file.fileno(), 0, access=mmap.ACCESS_READ) as data:
+                return reader(data)
+    except MemoryError as error:
+        raise ConversionError(pdf_memory_error_message(pdf_path)) from error
+    except OSError as error:
+        raise ConversionError(file_error_message("Could not read the PDF file", pdf_path, error)) from error
+
+
+def decompress_pdf_stream(content: bytes, max_bytes: int) -> bytes | None:
+    try:
+        decompressor = zlib.decompressobj()
+        output = decompressor.decompress(content, max_bytes + 1)
+        if len(output) > max_bytes or decompressor.unconsumed_tail:
+            return None
+        output += decompressor.flush(max_bytes + 1 - len(output))
+    except (zlib.error, ValueError, MemoryError):
+        return None
+    if len(output) > max_bytes:
+        return None
+    return output
+
+
+def iter_pdf_stream_objects(data: bytes | mmap.mmap):
     position = 0
     while True:
         stream_start = data.find(b"stream", position)
@@ -576,15 +611,20 @@ def iter_pdf_stream_objects(data: bytes) -> list[tuple[bytes, bytes]]:
         if stream_end == -1:
             break
 
-        content = data[content_start:stream_end].rstrip(b"\r\n")
         dictionary = stream_dictionary(data, stream_start)
-        streams.append((dictionary, content))
         position = stream_end + len(b"endstream")
-    return streams
+        stream_length = max(0, stream_end - content_start)
+        max_stream_bytes = MAX_RAW_IMAGE_STREAM_BYTES if is_image_stream_dictionary(dictionary) else MAX_BASIC_PDF_STREAM_BYTES
+        declared_length = declared_stream_length(dictionary)
+        if (declared_length and declared_length > max_stream_bytes) or stream_length > max_stream_bytes:
+            yield dictionary, b""
+            continue
+
+        content = data[content_start:stream_end].rstrip(b"\r\n")
+        yield dictionary, content
 
 
-def iter_pdf_streams(data: bytes) -> list[bytes]:
-    streams: list[bytes] = []
+def iter_pdf_streams(data: bytes | mmap.mmap):
     for dictionary, content in iter_pdf_stream_objects(data):
         if is_image_stream_dictionary(dictionary):
             continue
@@ -594,15 +634,14 @@ def iter_pdf_streams(data: bytes) -> list[bytes]:
             continue
 
         if b"/FlateDecode" in dictionary:
-            try:
-                content = zlib.decompress(content)
-            except zlib.error:
+            decompressed = decompress_pdf_stream(content, MAX_BASIC_PDF_STREAM_BYTES)
+            if decompressed is None:
                 continue
+            content = decompressed
 
         if len(content) > MAX_BASIC_PDF_STREAM_BYTES or not looks_like_text_content_stream(content):
             continue
-        streams.append(content)
-    return streams
+        yield content
 
 
 def png_chunk(kind: bytes, data: bytes) -> bytes:
@@ -668,13 +707,17 @@ def image_asset_from_stream(
     width = dictionary_int(dictionary, b"Width")
     height = dictionary_int(dictionary, b"Height")
     image_bytes: bytes | None
+    declared_length = declared_stream_length(dictionary)
+    if declared_length and declared_length > MAX_RAW_IMAGE_STREAM_BYTES:
+        return None
+
     if extension == ".png":
-        declared_length = declared_stream_length(dictionary)
-        if declared_length and declared_length > MAX_RAW_IMAGE_STREAM_BYTES:
+        decompressed = decompress_pdf_stream(content, MAX_RAW_IMAGE_STREAM_BYTES)
+        if decompressed is None:
             return None
         try:
-            image_bytes = raw_pdf_image_to_png(dictionary, zlib.decompress(content))
-        except (zlib.error, ValueError, OverflowError, struct.error):
+            image_bytes = raw_pdf_image_to_png(dictionary, decompressed)
+        except (ValueError, OverflowError, struct.error, MemoryError):
             image_bytes = None
     else:
         image_bytes = content
@@ -713,10 +756,10 @@ def extract_pdf_html_blocks(data: bytes, html_destination: Path) -> list[PdfHtml
             continue
 
         if b"/FlateDecode" in dictionary:
-            try:
-                content = zlib.decompress(content)
-            except zlib.error:
+            decompressed = decompress_pdf_stream(content, MAX_BASIC_PDF_STREAM_BYTES)
+            if decompressed is None:
                 continue
+            content = decompressed
 
         if len(content) > MAX_BASIC_PDF_STREAM_BYTES or not looks_like_text_content_stream(content):
             continue
@@ -731,7 +774,7 @@ def extract_pdf_html_blocks(data: bytes, html_destination: Path) -> list[PdfHtml
 
 
 def extract_pdf_images(pdf_path: Path, html_destination: Path) -> list[PdfImageAsset]:
-    blocks = extract_pdf_html_blocks(pdf_path.read_bytes(), html_destination)
+    blocks = read_pdf_with_mmap(pdf_path, lambda data: extract_pdf_html_blocks(data, html_destination))
     return [block.image for block in blocks if block.image is not None]
 
 
@@ -867,12 +910,14 @@ def extract_text_from_pdf_content(content: bytes) -> str:
 
 
 def extract_pdf_text_basic(pdf_path: Path) -> str:
-    data = pdf_path.read_bytes()
-    page_texts = [extract_text_from_pdf_content(stream) for stream in iter_pdf_streams(data)]
-    text = "\n".join(page_texts)
-    text = re.sub(r"[ \t]+\n", "\n", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    def extract(data: bytes | mmap.mmap) -> str:
+        page_texts = [extract_text_from_pdf_content(stream) for stream in iter_pdf_streams(data)]
+        text = "\n".join(page_texts)
+        text = re.sub(r"[ \t]+\n", "\n", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        return text.strip()
+
+    return read_pdf_with_mmap(pdf_path, extract)
 
 
 def extract_pdf_text(pdf_path: Path, *, prefer_fast: bool = False) -> str:
@@ -1040,15 +1085,10 @@ def convert_pdf_to_html(
     ensure_output_path(destination, overwrite)
 
     try:
-        data = source.read_bytes()
-    except OSError as error:
-        raise ConversionError(file_error_message("Could not read the PDF file", source, error)) from error
-
-    try:
-        blocks = extract_pdf_html_blocks(data, destination)
+        blocks = read_pdf_with_mmap(source, lambda data: extract_pdf_html_blocks(data, destination))
     except ConversionError:
         raise
-    except (ValueError, OverflowError, UnicodeError, zlib.error, struct.error) as error:
+    except (ValueError, OverflowError, UnicodeError, zlib.error, struct.error, MemoryError) as error:
         details = str(error).strip() or "No extra details were provided."
         raise ConversionError(f"Could not inspect the PDF contents: {type(error).__name__}: {details}") from error
 

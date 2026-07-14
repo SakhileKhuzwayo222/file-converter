@@ -3502,6 +3502,13 @@ function assertAllowedExtension(filename, allowedExtensions) {
                 success=False,
                 details=traceback.format_exc(),
             )
+        except MemoryError:
+            self.finish(
+                "This file is too large for the available memory during conversion.\n\n"
+                "Try closing other apps, splitting the file into smaller sections, or converting a smaller file first.",
+                success=False,
+                details=traceback.format_exc(),
+            )
         except Exception as error:
             details = str(error).strip() or "No additional details were returned."
             self.finish(
