@@ -23,7 +23,7 @@ It includes the FC Text Editor for text, data, web, code, script, and config fil
 - Audio files `.mp3`, `.wav`, `.m4a`, `.aac`, `.flac`, `.ogg`, `.wma` to MP3, WAV, M4A, FLAC, or OGG
 - Video files `.mp4`, `.mov`, `.mkv`, `.avi`, `.webm`, `.wmv`, `.mpeg`, `.mpg` to MP4, MOV, MKV, WEBM, or MP3 audio
 
-PDF conversion extracts readable text. PDF to HTML also extracts supported embedded images into a matching assets folder.
+PDF conversion extracts readable text. PDF to HTML also extracts supported embedded images into a matching assets folder and places them near the surrounding extracted PDF content when possible.
 Scanned PDFs without embedded image streams or selectable text may still need OCR first.
 EPUB conversion extracts readable chapter text and writes it into a simple PDF.
 Office-to-PDF and legacy Office conversions need Microsoft Office installed on Windows.

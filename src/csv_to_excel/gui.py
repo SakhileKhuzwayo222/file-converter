@@ -3224,7 +3224,7 @@ function assertAllowedExtension(filename, allowedExtensions) {
         if self.mode.get() == "folder":
             return 6 + size_mb * 0.45
         if spec.input_extensions == (".pdf",) and spec.output_extension == ".html":
-            return 5 + size_mb * 0.65
+            return 8 + size_mb * 1.2
         if spec.input_extensions == (".pdf",):
             return 8 + size_mb * 0.9
         if spec.output_extension == ".pdf" or spec.input_extensions in (WORD_EXTENSIONS, EXCEL_EXTENSIONS, POWERPOINT_EXTENSIONS):

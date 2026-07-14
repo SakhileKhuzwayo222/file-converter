@@ -77,6 +77,13 @@ class PdfImageAsset:
     height: int | None
 
 
+@dataclass(frozen=True)
+class PdfHtmlBlock:
+    kind: str
+    text: str = ""
+    image: PdfImageAsset | None = None
+
+
 class ReadableHtmlParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -633,43 +640,74 @@ def raw_pdf_image_to_png(dictionary: bytes, content: bytes) -> bytes | None:
     return rgb_png_bytes(width, height, rgb_data)
 
 
-def extract_pdf_images(pdf_path: Path, html_destination: Path) -> list[PdfImageAsset]:
-    data = pdf_path.read_bytes()
+def image_asset_from_stream(
+    dictionary: bytes,
+    content: bytes,
+    asset_dir: Path,
+    image_index: int,
+) -> PdfImageAsset | None:
+    extension = image_extension_for_dictionary(dictionary)
+    if not extension:
+        return None
+
+    width = dictionary_int(dictionary, b"Width")
+    height = dictionary_int(dictionary, b"Height")
+    image_bytes: bytes | None
+    if extension == ".png":
+        declared_length = declared_stream_length(dictionary)
+        if declared_length and declared_length > MAX_RAW_IMAGE_STREAM_BYTES:
+            return None
+        try:
+            image_bytes = raw_pdf_image_to_png(dictionary, zlib.decompress(content))
+        except zlib.error:
+            image_bytes = None
+    else:
+        image_bytes = content
+
+    if not image_bytes:
+        return None
+
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    image_path = asset_dir / f"image_{image_index}{extension}"
+    image_path.write_bytes(image_bytes)
+    return PdfImageAsset(image_path, width, height)
+
+
+def extract_pdf_html_blocks(data: bytes, html_destination: Path) -> list[PdfHtmlBlock]:
     asset_dir = html_destination.with_name(f"{html_destination.stem}_assets")
-    images: list[PdfImageAsset] = []
+    blocks: list[PdfHtmlBlock] = []
     image_index = 0
 
     for dictionary, content in iter_pdf_stream_objects(data):
-        if not is_image_stream_dictionary(dictionary):
+        if is_image_stream_dictionary(dictionary):
+            image_index += 1
+            image = image_asset_from_stream(dictionary, content, asset_dir, image_index)
+            if image:
+                blocks.append(PdfHtmlBlock(kind="image", image=image))
             continue
 
-        extension = image_extension_for_dictionary(dictionary)
-        if not extension:
+        declared_length = declared_stream_length(dictionary)
+        if declared_length and declared_length > MAX_BASIC_PDF_STREAM_BYTES:
             continue
 
-        width = dictionary_int(dictionary, b"Width")
-        height = dictionary_int(dictionary, b"Height")
-        image_bytes: bytes | None
-        if extension == ".png":
-            declared_length = declared_stream_length(dictionary)
-            if declared_length and declared_length > MAX_RAW_IMAGE_STREAM_BYTES:
-                continue
+        if b"/FlateDecode" in dictionary:
             try:
-                image_bytes = raw_pdf_image_to_png(dictionary, zlib.decompress(content))
+                content = zlib.decompress(content)
             except zlib.error:
-                image_bytes = None
-        else:
-            image_bytes = content
+                continue
 
-        if not image_bytes:
+        if len(content) > MAX_BASIC_PDF_STREAM_BYTES or not looks_like_text_content_stream(content):
             continue
 
-        asset_dir.mkdir(parents=True, exist_ok=True)
-        image_index += 1
-        image_path = asset_dir / f"image_{image_index}{extension}"
-        image_path.write_bytes(image_bytes)
-        images.append(PdfImageAsset(image_path, width, height))
-    return images
+        text = extract_text_from_pdf_content(content).strip()
+        if text:
+            blocks.append(PdfHtmlBlock(kind="text", text=text))
+    return blocks
+
+
+def extract_pdf_images(pdf_path: Path, html_destination: Path) -> list[PdfImageAsset]:
+    blocks = extract_pdf_html_blocks(pdf_path.read_bytes(), html_destination)
+    return [block.image for block in blocks if block.image is not None]
 
 
 def parse_literal_string(text: str, start: int) -> tuple[str, int]:
@@ -829,31 +867,49 @@ def extract_pdf_text(pdf_path: Path, *, prefer_fast: bool = False) -> str:
     return extract_pdf_text_basic(pdf_path)
 
 
-def paragraphs_to_html(title: str, paragraphs: list[str], images: list[PdfImageAsset], output_dir: Path) -> str:
-    safe_title = html.escape(title)
-    body = "\n".join(
+def text_block_to_html(text: str) -> str:
+    paragraphs = normalize_paragraphs(text)
+    return "\n".join(
         f"      <p>{'<br>'.join(html.escape(line) for line in paragraph.splitlines())}</p>"
         for paragraph in paragraphs
     )
-    if not body:
-        body = "      <p>No selectable text was found. Extracted images are shown below.</p>"
 
-    image_markup = ""
-    if images:
-        figures: list[str] = ['      <section class="pdf-images">', "        <h2>Images from the PDF</h2>"]
-        for index, image in enumerate(images, start=1):
-            try:
-                source = image.path.resolve().relative_to(output_dir.resolve()).as_posix()
-            except ValueError:
-                source = image.path.as_posix()
-            width_attribute = f' width="{image.width}"' if image.width else ""
-            height_attribute = f' height="{image.height}"' if image.height else ""
-            figures.append(
-                f'        <figure><img src="{html.escape(source, quote=True)}" alt="PDF image {index}"'
-                f'{width_attribute}{height_attribute} loading="lazy"><figcaption>Image {index}</figcaption></figure>'
-            )
-        figures.append("      </section>")
-        image_markup = "\n" + "\n".join(figures)
+
+def image_block_to_html(image: PdfImageAsset, output_dir: Path, index: int) -> str:
+    try:
+        source = image.path.resolve().relative_to(output_dir.resolve()).as_posix()
+    except ValueError:
+        source = image.path.as_posix()
+    width_attribute = f' width="{image.width}"' if image.width else ""
+    height_attribute = f' height="{image.height}"' if image.height else ""
+    return (
+        f'      <figure><img src="{html.escape(source, quote=True)}" alt="PDF image {index}"'
+        f'{width_attribute}{height_attribute} loading="lazy"><figcaption>Image {index}</figcaption></figure>'
+    )
+
+
+def html_blocks_markup(blocks: list[PdfHtmlBlock], output_dir: Path) -> str:
+    if not blocks:
+        return "      <p>No selectable text or supported images were found.</p>"
+
+    output: list[str] = []
+    image_index = 0
+    has_text = any(block.kind == "text" and block.text.strip() for block in blocks)
+    if not has_text and any(block.kind == "image" for block in blocks):
+        output.append("      <p>No selectable text was found. Extracted images are shown below.</p>")
+
+    for block in blocks:
+        if block.kind == "text" and block.text.strip():
+            output.append(text_block_to_html(block.text))
+        elif block.kind == "image" and block.image:
+            image_index += 1
+            output.append(image_block_to_html(block.image, output_dir, image_index))
+    return "\n".join(part for part in output if part)
+
+
+def blocks_to_html(title: str, blocks: list[PdfHtmlBlock], output_dir: Path) -> str:
+    safe_title = html.escape(title)
+    body = html_blocks_markup(blocks, output_dir)
 
     return f"""<!doctype html>
 <html lang="en">
@@ -891,17 +947,8 @@ def paragraphs_to_html(title: str, paragraphs: list[str], images: list[PdfImageA
         margin: 0 0 16px;
         white-space: normal;
       }}
-      .pdf-images {{
-        margin-top: 32px;
-        padding-top: 22px;
-        border-top: 1px solid #d9e4ec;
-      }}
-      .pdf-images h2 {{
-        margin: 0 0 18px;
-        font-size: 20px;
-      }}
       figure {{
-        margin: 0 0 22px;
+        margin: 18px 0 24px;
       }}
       img {{
         display: block;
@@ -922,7 +969,6 @@ def paragraphs_to_html(title: str, paragraphs: list[str], images: list[PdfImageA
     <main>
       <h1>{safe_title}</h1>
 {body}
-{image_markup}
     </main>
   </body>
 </html>
@@ -962,17 +1008,19 @@ def convert_pdf_to_html(
     destination = Path(output_path) if output_path else source.with_suffix(".html")
     ensure_output_path(destination, overwrite)
 
-    images = extract_pdf_images(source, destination)
-    text = extract_pdf_text_basic(source)
-    if not text.strip() and not images:
+    data = source.read_bytes()
+    blocks = extract_pdf_html_blocks(data, destination)
+    has_text = any(block.kind == "text" and block.text.strip() for block in blocks)
+    has_images = any(block.kind == "image" for block in blocks)
+    if not has_text and not has_images:
         text = extract_pdf_text(source, prefer_fast=True)
-    if not text.strip() and not images:
-        raise ConversionError(
-            "No readable text was found in this PDF. It may be scanned or image-only, which needs OCR."
-        )
+        if text.strip():
+            blocks = [PdfHtmlBlock(kind="text", text=text)]
 
-    paragraphs = normalize_paragraphs(text) if text.strip() else []
-    destination.write_text(paragraphs_to_html(source.stem, paragraphs, images, destination.parent), encoding="utf-8")
+    if not blocks:
+        raise ConversionError("No readable text or supported embedded images were found in this PDF. It may need OCR.")
+
+    destination.write_text(blocks_to_html(source.stem, blocks, destination.parent), encoding="utf-8")
     return destination
 
 
